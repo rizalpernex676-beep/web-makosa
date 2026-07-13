@@ -1,0 +1,108 @@
+export type UserRole = 'user' | 'admin';
+
+export interface UserProfile {
+  uid: string;
+  name: string;
+  email: string;
+  photoUrl: string;
+  phone: string;
+  address: string;
+  role: UserRole;
+  createdAt: string;
+}
+
+export interface Product {
+  id: string;
+  name: string;
+  description: string;
+  price: number;
+  stock: number;
+  images: string[];
+  isActive: boolean;
+  updatedAt: string;
+}
+
+export interface CartItem {
+  product: Product;
+  quantity: number;
+}
+
+export type OrderStatus = 'menunggu_pembayaran' | 'diproses' | 'dikirim' | 'selesai';
+
+export interface OrderItem {
+  productId: string;
+  name: string;
+  qty: number;
+  price: number;
+  image: string;
+}
+
+export interface Order {
+  id: string;
+  userId: string;
+  userName: string;
+  items: OrderItem[];
+  totalPrice: number;
+  status: OrderStatus;
+  shippingAddress: string;
+  phone: string;
+  courier: string;
+  trackingNumber: string;
+  paymentId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Payment {
+  id: string;
+  orderId: string;
+  method: string;
+  amount: number;
+  status: 'pending' | 'settlement' | 'expire' | 'failure';
+  midtransResponse?: any;
+  createdAt: string;
+}
+
+export interface Article {
+  id: string;
+  title: string;
+  content: string;
+  category: string;
+  coverImage: string;
+  isPublished: boolean;
+  views: number;
+  createdAt: string;
+}
+
+export interface FAQ {
+  id: string;
+  question: string;
+  answer: string;
+  order: number;
+  tags: string[];
+}
+
+export interface HomepageSection {
+  id: string;
+  type: 'hero' | 'banner' | 'about' | 'products' | 'articles' | 'partners' | 'faq';
+  title: string;
+  subtitle: string;
+  buttonText: string;
+  buttonLink: string;
+  image: string;
+  order: number;
+}
+
+export interface SiteSettings {
+  logoUrl: string;
+  siteName: string;
+  tagline: string;
+  email: string;
+  phone: string;
+  address: string;
+  socialMedia: {
+    instagram: string;
+    facebook: string;
+    youtube: string;
+  };
+}
