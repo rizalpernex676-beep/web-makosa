@@ -1,38 +1,43 @@
 import React from 'react';
-import { ShoppingCart, LogIn, LogOut, Menu, User, ShieldAlert, BookOpen, Compass } from 'lucide-react';
-import { UserProfile, SiteSettings } from '../types';
+import { LogIn, LogOut, Menu, User, ShieldAlert, BookOpen, Compass, Bell } from 'lucide-react';
+import { UserProfile, SiteSettings, InAppNotification } from '../types';
 
 interface NavbarProps {
   currentUser: UserProfile | null;
+  isAdmin: boolean;
   currentView: string;
   onNavigate: (view: string) => void;
-  cartCount: number;
   onLogin: () => void;
   onLogout: () => void;
   settings: SiteSettings;
+  notifications: InAppNotification[];
+  onMarkNotificationRead: (id: string, orderId: string) => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
   currentUser,
+  isAdmin,
   currentView,
   onNavigate,
-  cartCount,
   onLogin,
   onLogout,
-  settings
+  settings,
+  notifications,
+  onMarkNotificationRead
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
+  const [notifOpen, setNotifOpen] = React.useState(false);
 
   const handleNav = (view: string) => {
     onNavigate(view);
     setMobileMenuOpen(false);
   };
 
-  const navLinks = [
+  const navLinks: { name: string; view: string; hash?: string }[] = [
     { name: 'Beranda', view: 'home' },
-    { name: 'Produk', view: 'home', hash: '#produk' },
-    { name: 'Artikel', view: 'home', hash: '#artikel' },
-    { name: 'FAQ', view: 'home', hash: '#faq' },
+    { name: 'Katalog Produk', view: 'katalog-produk' },
+    { name: 'Artikel Terbaru', view: 'artikel-terbaru' },
+    { name: 'Pusat FAQ', view: 'pusat-faq' },
   ];
 
   return (
@@ -47,7 +52,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           <img 
             alt="MAKOSA Logo" 
             className="h-10 md:h-12 w-auto object-contain transition-transform group-hover:scale-105" 
-            src={settings.logoUrl} 
+            src={settings.logoUrl || undefined} 
           />
           <span className="text-xl md:text-2xl font-bold tracking-tight text-[#154212] font-display">
             {settings.siteName}
@@ -89,7 +94,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               >
                 Pesanan Saya
               </a>
-              {currentUser.role === 'admin' && (
+              {isAdmin && (
                 <button
                   onClick={() => handleNav('admin-dashboard')}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-[#154212]/10 hover:bg-[#154212]/20 text-[#154212] rounded-lg text-xs font-bold transition-all"
@@ -104,33 +109,73 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* Action Controls */}
         <div className="flex items-center gap-4 md:gap-5">
-          {/* Shopping Cart button */}
-          <button 
-            onClick={() => handleNav('cart')}
-            className="p-2 hover:bg-zinc-100 rounded-full transition-all relative text-zinc-700"
-            aria-label="View Cart"
-          >
-            <ShoppingCart className="w-5.5 h-5.5" />
-            {cartCount > 0 && (
-              <span className="absolute -top-1 -right-1 bg-[#fcd400] text-[#6e5c00] text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-full ring-2 ring-white">
-                {cartCount}
-              </span>
-            )}
-          </button>
+          {currentUser && (
+            <div className="relative">
+              <button
+                onClick={() => setNotifOpen(!notifOpen)}
+                className="p-2 text-zinc-600 hover:text-[#154212] hover:bg-zinc-100 rounded-full relative transition-all cursor-pointer focus:outline-none"
+                title="Notifikasi"
+              >
+                <Bell className="w-5 h-5" />
+                {notifications.filter(n => !n.isRead).length > 0 && (
+                  <span className="absolute top-0 right-0 w-4 h-4 bg-red-600 text-white text-[9px] font-bold rounded-full flex items-center justify-center border-2 border-white animate-pulse">
+                    {notifications.filter(n => !n.isRead).length}
+                  </span>
+                )}
+              </button>
+
+              {/* Notification Popover Dropdown */}
+              {notifOpen && (
+                <div className="absolute right-0 mt-2 w-80 bg-white border border-zinc-200 rounded-xl shadow-xl z-55 overflow-hidden divide-y divide-zinc-100">
+                  <div className="px-4 py-3 bg-[#154212]/5 flex justify-between items-center">
+                    <span className="font-bold text-xs text-[#154212] uppercase tracking-wider">Notifikasi</span>
+                    {notifications.filter(n => !n.isRead).length > 0 && (
+                      <span className="text-[10px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded">
+                        {notifications.filter(n => !n.isRead).length} Baru
+                      </span>
+                    )}
+                  </div>
+                  <div className="max-h-64 overflow-y-auto custom-scrollbar">
+                    {notifications.length === 0 ? (
+                      <p className="p-4 text-center text-xs text-zinc-400">Tidak ada notifikasi baru.</p>
+                    ) : (
+                      notifications.map((n) => (
+                        <button 
+                          key={n.id}
+                          onClick={() => {
+                            onMarkNotificationRead(n.id, n.orderId);
+                            setNotifOpen(false);
+                          }}
+                          className={`w-full p-4 text-left cursor-pointer transition-colors hover:bg-zinc-50 border-none bg-transparent block ${!n.isRead ? 'bg-zinc-50/80 font-semibold' : ''}`}
+                        >
+                          <p className="text-xs text-zinc-800 leading-snug">{n.message}</p>
+                          <p className="text-[9px] text-zinc-400 mt-1">{new Date(n.createdAt).toLocaleString('id-ID')}</p>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* User Profile / Login menu */}
           {currentUser ? (
             <div className="flex items-center gap-3">
               <button
                 onClick={() => handleNav('profile')}
-                className="w-9 h-9 rounded-full overflow-hidden border-2 border-[#154212]/20 hover:border-[#154212] transition-all cursor-pointer focus:outline-none"
+                className="w-9 h-9 rounded-full overflow-hidden border-2 border-[#154212]/20 hover:border-[#154212] transition-all cursor-pointer focus:outline-none flex items-center justify-center bg-[#154212] text-white font-bold text-sm"
                 title="Edit Profil"
               >
-                <img 
-                  className="w-full h-full object-cover" 
-                  src={currentUser.photoUrl} 
-                  alt={currentUser.name} 
-                />
+                {currentUser.photoUrl ? (
+                  <img 
+                    className="w-full h-full object-cover" 
+                    src={currentUser.photoUrl} 
+                    alt={currentUser.name} 
+                  />
+                ) : (
+                  <span>{currentUser.name ? currentUser.name.charAt(0).toUpperCase() : 'U'}</span>
+                )}
               </button>
               <button
                 onClick={onLogout}
@@ -199,7 +244,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               >
                 Edit Profil
               </a>
-              {currentUser.role === 'admin' && (
+              {isAdmin && (
                 <button
                   onClick={() => handleNav('admin-dashboard')}
                   className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[#154212]/10 text-[#154212] font-bold rounded-lg text-sm mt-1"

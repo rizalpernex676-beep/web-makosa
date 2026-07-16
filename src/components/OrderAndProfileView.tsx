@@ -1,6 +1,7 @@
 import React from 'react';
-import { Package, Truck, Receipt, CheckCircle, CreditCard, Copy, Check, Clock, ShieldCheck, HelpCircle, MapPin, Phone, User, LogOut } from 'lucide-react';
+import { Package, Truck, Receipt, CheckCircle, CreditCard, Copy, Check, Clock, ShieldCheck, HelpCircle, MapPin, Phone, User, LogOut, Trash2 } from 'lucide-react';
 import { Order, OrderStatus, UserProfile } from '../types';
+import { ScrollReveal } from './ScrollReveal';
 
 interface OrderAndProfileViewProps {
   orders: Order[];
@@ -10,6 +11,8 @@ interface OrderAndProfileViewProps {
   onNavigate: (view: string) => void;
   selectedOrder: Order | null;
   onSelectOrder: (order: Order | null) => void;
+  onUpdateStatus?: (orderId: string, status: OrderStatus) => Promise<void>;
+  onDeleteOrder?: (orderId: string) => Promise<void>;
 }
 
 export const OrderAndProfileView: React.FC<OrderAndProfileViewProps> = ({
@@ -19,7 +22,9 @@ export const OrderAndProfileView: React.FC<OrderAndProfileViewProps> = ({
   onLogout,
   onNavigate,
   selectedOrder,
-  onSelectOrder
+  onSelectOrder,
+  onUpdateStatus,
+  onDeleteOrder
 }) => {
   const [copied, setCopied] = React.useState(false);
   const [submitting, setSubmitting] = React.useState(false);
@@ -62,8 +67,8 @@ export const OrderAndProfileView: React.FC<OrderAndProfileViewProps> = ({
 
   const getStatusBadge = (status: OrderStatus) => {
     switch (status) {
-      case 'menunggu_pembayaran':
-        return <span className="px-3 py-1 bg-amber-100 text-amber-800 text-xs font-bold rounded-full uppercase tracking-wider">Menunggu</span>;
+      case 'menunggu_konfirmasi':
+        return <span className="px-3 py-1 bg-amber-100 text-amber-800 text-xs font-bold rounded-full uppercase tracking-wider">Menunggu Konfirmasi</span>;
       case 'diproses':
         return <span className="px-3 py-1 bg-blue-100 text-blue-800 text-xs font-bold rounded-full uppercase tracking-wider">Diproses</span>;
       case 'dikirim':
@@ -75,7 +80,7 @@ export const OrderAndProfileView: React.FC<OrderAndProfileViewProps> = ({
 
   const getStepProgressWidth = (status: OrderStatus) => {
     switch (status) {
-      case 'menunggu_pembayaran': return '10%';
+      case 'menunggu_konfirmasi': return '10%';
       case 'diproses': return '35%';
       case 'dikirim': return '68%';
       case 'selesai': return '100%';
@@ -101,11 +106,11 @@ export const OrderAndProfileView: React.FC<OrderAndProfileViewProps> = ({
   if (selectedOrder) {
     const totalQty = selectedOrder.items.reduce((sum, item) => sum + item.qty, 0);
     const subtotalCost = selectedOrder.items.reduce((sum, item) => sum + (item.price * item.qty), 0);
-    const orderShippingFee = 15000;
-    const orderDiscount = 15000; // flat mockup discount from design
+    const orderShippingFee = selectedOrder.shippingEstimate || 0;
 
     return (
-      <div className="max-w-5xl mx-auto px-6 md:px-10 py-12 animate-in fade-in duration-300 font-sans">
+      <ScrollReveal>
+        <div className="max-w-5xl mx-auto px-6 md:px-10 py-12 animate-in fade-in duration-300 font-sans">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-8">
           <div>
             <button 
@@ -147,7 +152,7 @@ export const OrderAndProfileView: React.FC<OrderAndProfileViewProps> = ({
                 <div className="w-10 h-10 rounded-full bg-[#154212] text-white flex items-center justify-center shadow-md border-4 border-white">
                   <Check className="w-5 h-5" />
                 </div>
-                <p className="mt-3 font-semibold text-xs text-[#154212] text-center leading-tight">Menunggu<br/>Pembayaran</p>
+                <p className="mt-3 font-semibold text-xs text-[#154212] text-center leading-tight">Menunggu<br/>Konfirmasi</p>
               </div>
 
               {/* Step 2: Diproses */}
@@ -264,7 +269,11 @@ export const OrderAndProfileView: React.FC<OrderAndProfileViewProps> = ({
               <div className="divide-y divide-zinc-100">
                 {selectedOrder.items.map((item, idx) => (
                   <div key={idx} className="p-6 flex items-center gap-4 hover:bg-zinc-50/50 transition-colors">
-                    <img src={item.image} className="w-16 h-16 object-cover rounded-lg flex-shrink-0" alt={item.name} />
+                    {item.image ? (
+                      <img src={item.image || undefined} className="w-16 h-16 object-cover rounded-lg flex-shrink-0" alt={item.name} />
+                    ) : (
+                      <div className="w-16 h-16 rounded-lg bg-zinc-100 border border-zinc-200 flex items-center justify-center text-[10px] text-zinc-400 flex-shrink-0">No Img</div>
+                    )}
                     <div className="flex-grow">
                       <p className="font-bold text-zinc-900 text-sm sm:text-base">{item.name}</p>
                       <p className="text-xs text-zinc-500">{item.qty} unit x Rp {item.price.toLocaleString('id-ID')}</p>
@@ -290,17 +299,15 @@ export const OrderAndProfileView: React.FC<OrderAndProfileViewProps> = ({
                   <span className="font-semibold text-zinc-950">Rp {subtotalCost.toLocaleString('id-ID')}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span>Ongkos Kirim (12kg)</span>
-                  <span className="font-semibold text-zinc-950">Rp {orderShippingFee.toLocaleString('id-ID')}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Diskon Voucher</span>
-                  <span className="font-semibold text-emerald-600">-Rp {orderDiscount.toLocaleString('id-ID')}</span>
+                  <span>Ongkos Kirim</span>
+                  <span className="font-semibold text-zinc-950">
+                    {orderShippingFee > 0 ? `Rp ${orderShippingFee.toLocaleString('id-ID')}` : 'Gratis / Belum Diisi'}
+                  </span>
                 </div>
                 <div className="h-[1px] bg-zinc-100 pt-2"></div>
                 <div className="flex justify-between text-base font-bold text-[#154212] pt-1">
                   <span>Total Tagihan</span>
-                  <span className="text-xl font-extrabold">Rp {selectedOrder.totalPrice.toLocaleString('id-ID')}</span>
+                  <span className="text-xl font-extrabold">Rp {(subtotalCost + orderShippingFee).toLocaleString('id-ID')}</span>
                 </div>
               </div>
 
@@ -309,20 +316,67 @@ export const OrderAndProfileView: React.FC<OrderAndProfileViewProps> = ({
                   <CreditCard className="w-5 h-5 text-[#154212]" />
                   <div>
                     <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Metode Pembayaran</p>
-                    <p className="text-sm font-bold text-zinc-900">QRIS via Midtrans</p>
+                    <p className="text-sm font-bold text-zinc-900">WhatsApp / Transfer Manual</p>
                   </div>
                 </div>
               </div>
+
+              {/* Customer Actions */}
+              {(selectedOrder.status === 'dikirim' || selectedOrder.status === 'selesai') && (
+                <div className="pt-4 border-t border-zinc-100 space-y-3">
+                  {selectedOrder.status === 'dikirim' && onUpdateStatus && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (confirm("Apakah Anda yakin telah menerima pesanan ini dengan baik? Tindakan ini tidak dapat dibatalkan.")) {
+                          try {
+                            await onUpdateStatus(selectedOrder.id, 'selesai');
+                            onSelectOrder(null);
+                          } catch (err: any) {
+                            alert(`Gagal memperbarui: ${err.message || err}`);
+                          }
+                        }
+                      }}
+                      className="w-full flex items-center justify-center gap-2 py-3 bg-[#154212] hover:bg-[#2d5a27] text-white font-bold text-xs rounded-lg transition-colors cursor-pointer"
+                    >
+                      <CheckCircle className="w-4 h-4" />
+                      <span>Konfirmasi Pesanan Selesai</span>
+                    </button>
+                  )}
+
+                  {selectedOrder.status === 'selesai' && onDeleteOrder && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (confirm("Apakah Anda yakin ingin menghapus history pesanan ini dari akun Anda?")) {
+                          try {
+                            await onDeleteOrder(selectedOrder.id);
+                            onSelectOrder(null);
+                          } catch (err: any) {
+                            alert(`Gagal menghapus: ${err.message || err}`);
+                          }
+                        }
+                      }}
+                      className="w-full flex items-center justify-center gap-2 py-3 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-lg transition-colors cursor-pointer"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      <span>Hapus Riwayat Pesanan</span>
+                    </button>
+                  )}
+                </div>
+              )}
             </aside>
           </div>
         </div>
       </div>
+      </ScrollReveal>
     );
   }
 
   // --- RENDERING ORDER HISTORY & EDIT PROFILE ---
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 animate-in fade-in duration-300 font-sans">
+    <ScrollReveal>
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 animate-in fade-in duration-300 font-sans">
       {/* Left Column: Orders History List */}
       <div className="lg:col-span-8 space-y-8">
         <div>
@@ -368,7 +422,11 @@ export const OrderAndProfileView: React.FC<OrderAndProfileViewProps> = ({
 
                     <div className="pt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                       <div className="flex items-center gap-3">
-                        <img src={order.items[0].image} className="w-12 h-12 object-cover rounded" alt="" />
+                        {order.items && order.items[0] && order.items[0].image ? (
+                          <img src={order.items[0].image || undefined} className="w-12 h-12 object-cover rounded" alt="" />
+                        ) : (
+                          <div className="w-12 h-12 rounded bg-zinc-100 border border-zinc-200 flex items-center justify-center text-[10px] text-zinc-400">No Img</div>
+                        )}
                         <div>
                           <p className="text-sm font-bold text-zinc-900 truncate max-w-xs">{order.items[0].name}</p>
                           {order.items.length > 1 && (
@@ -399,8 +457,12 @@ export const OrderAndProfileView: React.FC<OrderAndProfileViewProps> = ({
 
         <div className="relative space-y-6">
           <div className="flex items-center gap-4">
-            <div className="w-16 h-16 rounded-full overflow-hidden border-2 border-[#154212]/20">
-              <img src={currentUser.photoUrl} className="w-full h-full object-cover" alt="" />
+            <div className="w-16 h-16 rounded-full overflow-hidden border-2 border-[#154212]/20 flex items-center justify-center bg-[#154212] text-white font-bold text-xl">
+              {currentUser.photoUrl ? (
+                <img src={currentUser.photoUrl} className="w-full h-full object-cover" alt="" />
+              ) : (
+                <span>{currentUser.name ? currentUser.name.charAt(0).toUpperCase() : 'U'}</span>
+              )}
             </div>
             <div>
               <h3 className="font-bold text-lg text-zinc-900 font-display">{currentUser.name}</h3>
@@ -435,10 +497,11 @@ export const OrderAndProfileView: React.FC<OrderAndProfileViewProps> = ({
               <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider" htmlFor="paddress">Alamat Pengiriman Utama</label>
               <textarea 
                 id="paddress"
+                required
                 rows={3}
                 value={profileAddress}
                 onChange={(e) => setProfileAddress(e.target.value)}
-                placeholder="Jl. Raya Desa No. 12, Jawa Tengah"
+                placeholder="Jl. Raya Desa No. 12, Jawa Tengah (wajib diisi)"
                 className="w-full px-3 py-2 text-sm border border-zinc-300 bg-white text-zinc-900 rounded-lg focus:border-[#154212] focus:ring-1 focus:ring-[#154212] resize-none"
               ></textarea>
             </div>
@@ -471,6 +534,7 @@ export const OrderAndProfileView: React.FC<OrderAndProfileViewProps> = ({
         </div>
       </div>
     </div>
+    </ScrollReveal>
   );
 };
 export default OrderAndProfileView;

@@ -17,6 +17,7 @@ export interface Product {
   description: string;
   price: number;
   stock: number;
+  weight?: number; // in grams
   images: string[];
   isActive: boolean;
   updatedAt: string;
@@ -27,7 +28,7 @@ export interface CartItem {
   quantity: number;
 }
 
-export type OrderStatus = 'menunggu_pembayaran' | 'diproses' | 'dikirim' | 'selesai';
+export type OrderStatus = 'menunggu_konfirmasi' | 'diproses' | 'dikirim' | 'selesai';
 
 export interface OrderItem {
   productId: string;
@@ -47,6 +48,10 @@ export interface Order {
   shippingAddress: string;
   phone: string;
   courier: string;
+  courierService?: string;
+  shippingCost?: number;
+  shippingEstimate?: number | null;
+  destinationAreaId?: string;
   trackingNumber: string;
   paymentId: string;
   createdAt: string;
@@ -82,6 +87,12 @@ export interface FAQ {
   tags: string[];
 }
 
+export interface HeroMediaItem {
+  type: 'image' | 'video';
+  url: string;
+  order: number;
+}
+
 export interface HomepageSection {
   id: string;
   type: 'hero' | 'banner' | 'about' | 'products' | 'articles' | 'partners' | 'faq';
@@ -91,6 +102,7 @@ export interface HomepageSection {
   buttonLink: string;
   image: string;
   order: number;
+  heroMedia?: HeroMediaItem[];
 }
 
 export interface SiteSettings {
@@ -99,10 +111,23 @@ export interface SiteSettings {
   tagline: string;
   email: string;
   phone: string;
+  contactWhatsApp?: string;
   address: string;
+  originAreaId?: string;
   socialMedia: {
     instagram: string;
     facebook: string;
     youtube: string;
   };
 }
+
+export interface InAppNotification {
+  id: string;
+  recipientRole: 'admin' | 'user';
+  recipientUserId: string | null;
+  message: string;
+  orderId: string;
+  isRead: boolean;
+  createdAt: string;
+}
+

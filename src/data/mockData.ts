@@ -106,7 +106,9 @@ export const INITIAL_SETTINGS: SiteSettings = {
   tagline: 'Eco-Professional Portal',
   email: 'admin@makosa.id',
   phone: '81234567890',
+  contactWhatsApp: '6282322418043',
   address: 'Desa Manggihan, Kec. Getasan, Kab. Semarang, Jawa Tengah',
+  originAreaId: '68244',
   socialMedia: {
     instagram: 'instagram.com/makosa.id',
     facebook: 'facebook.com/makosa.official',

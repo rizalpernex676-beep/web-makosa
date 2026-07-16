@@ -29,230 +29,7 @@ const PORT = 3000;
 // Enable JSON bodies
 app.use(express.json());
 
-// 1. MIDTRANS SNAP API ROUTE
-// Client requests a Snap payment token for an order.
-app.post('/api/checkout/snap', async (req, res) => {
-  try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'Tidak diotorisasi: Token JWT tidak ditemukan.' });
-    }
-
-    const token = authHeader.split('Bearer ')[1];
-    let decodedToken;
-    try {
-      decodedToken = await auth.verifyIdToken(token);
-    } catch (err) {
-      return res.status(401).json({ error: 'Tidak diotorisasi: Token JWT tidak valid.' });
-    }
-
-    const { orderId } = req.body;
-    if (!orderId) {
-      return res.status(400).json({ error: 'orderId wajib dikirimkan.' });
-    }
-
-    // Fetch order from Firestore
-    const orderDoc = await db.collection('orders').doc(orderId).get();
-    if (!orderDoc.exists) {
-      return res.status(404).json({ error: 'Pesanan tidak ditemukan.' });
-    }
-
-    const orderData = orderDoc.data();
-    if (!orderData) {
-      return res.status(500).json({ error: 'Data pesanan kosong.' });
-    }
-
-    // Security: ensure the logged-in user matches the order owner
-    if (orderData.userId !== decodedToken.uid) {
-      return res.status(403).json({ error: 'Akses ditolak: Anda bukan pemilik pesanan ini.' });
-    }
-
-    const serverKey = process.env.MIDTRANS_SERVER_KEY || 'Mid-server-DJHgxVKDB-XMzCYsrwzboWao';
-    const midtransUrl = 'https://app.sandbox.midtrans.com/snap/v1/transactions';
-
-    // Map cart items into Midtrans item_details format
-    const itemDetails = (orderData.items || []).map((item: any) => ({
-      id: item.productId,
-      price: item.price,
-      quantity: item.qty,
-      name: item.name.substring(0, 50), // Midtrans max length is 50
-    }));
-
-    const payload = {
-      transaction_details: {
-        order_id: orderId,
-        gross_amount: orderData.totalPrice,
-      },
-      item_details: itemDetails,
-      customer_details: {
-        first_name: orderData.userName || decodedToken.name || 'Pelanggan',
-        email: decodedToken.email || orderData.email || 'customer@example.com',
-        phone: orderData.phone || '',
-        shipping_address: {
-          first_name: orderData.userName || decodedToken.name || 'Pelanggan',
-          address: orderData.shippingAddress,
-          phone: orderData.phone || '',
-        }
-      },
-      enabled_payments: ['qris', 'gopay', 'shopeepay', 'bank_transfer'],
-    };
-
-    const authString = Buffer.from(`${serverKey}:`).toString('base64');
-
-    const response = await fetch(midtransUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'Authorization': `Basic ${authString}`,
-      },
-      body: JSON.stringify(payload),
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error('Midtrans API error:', errText);
-      return res.status(500).json({ error: 'Gagal menghubungi Midtrans Snap API.', details: errText });
-    }
-
-    const midtransData = await response.json();
-    return res.json({
-      token: midtransData.token,
-      redirect_url: midtransData.redirect_url,
-    });
-  } catch (error: any) {
-    console.error('Checkout Snap Error:', error);
-    return res.status(500).json({ error: 'Internal server error.', message: error.message });
-  }
-});
-
-// 2. MIDTRANS WEBHOOK ENDPOINT
-// Handles incoming HTTP POST notification from Midtrans
-app.post('/api/midtrans/webhook', async (req, res) => {
-  try {
-    const {
-      order_id,
-      status_code,
-      gross_amount,
-      signature_key,
-      transaction_status,
-      fraud_status,
-    } = req.body;
-
-    if (!order_id || !status_code || !gross_amount || !signature_key) {
-      return res.status(400).json({ error: 'Payload tidak lengkap.' });
-    }
-
-    // Verify signature key to prevent spoofing
-    const serverKey = process.env.MIDTRANS_SERVER_KEY || 'Mid-server-DJHgxVKDB-XMzCYsrwzboWao';
-    const signatureStr = `${order_id}${status_code}${gross_amount}${serverKey}`;
-    const calculatedSignature = crypto
-      .createHash('sha512')
-      .update(signatureStr)
-      .digest('hex');
-
-    if (calculatedSignature !== signature_key) {
-      console.warn(`[WARNING] Signature mismatch for order: ${order_id}`);
-      return res.status(403).json({ error: 'Signature key tidak valid!' });
-    }
-
-    console.log(`[MIDTRANS WEBHOOK] Status transaksi order ${order_id} adalah ${transaction_status}`);
-
-    const isSettled =
-      transaction_status === 'settlement' ||
-      (transaction_status === 'capture' && fraud_status === 'accept');
-
-    const isFailed =
-      transaction_status === 'expire' ||
-      transaction_status === 'failure' ||
-      transaction_status === 'cancel';
-
-    if (isSettled) {
-      // 1-Transaction atomic update: status order, stock reduction, payments collection update
-      await db.runTransaction(async (transaction) => {
-        const orderRef = db.collection('orders').doc(order_id);
-        const orderDoc = await transaction.get(orderRef);
-
-        if (!orderDoc.exists) {
-          throw new Error(`Order ${order_id} tidak ditemukan.`);
-        }
-
-        const orderData = orderDoc.data();
-        if (!orderData) {
-          throw new Error(`Data order ${order_id} kosong.`);
-        }
-
-        // Avoid double processing if order is already processed
-        if (orderData.status !== 'menunggu_pembayaran') {
-          console.log(`Order ${order_id} sudah diproses sebelumnya.`);
-          return;
-        }
-
-        // Check and reduce stock for each product in the order
-        for (const item of orderData.items || []) {
-          const productRef = db.collection('products').doc(item.productId);
-          const productDoc = await transaction.get(productRef);
-
-          if (!productDoc.exists) {
-            throw new Error(`Produk ${item.productId} tidak ditemukan di katalog.`);
-          }
-
-          const productData = productDoc.data();
-          const currentStock = productData?.stock || 0;
-          const newStock = currentStock - item.qty;
-
-          if (newStock < 0) {
-            throw new Error(`Stok produk "${item.name}" tidak mencukupi.`);
-          }
-
-          transaction.update(productRef, { stock: newStock, updatedAt: new Date().toISOString() });
-        }
-
-        // Update order status
-        transaction.update(orderRef, {
-          status: 'diproses',
-          updatedAt: new Date().toISOString(),
-        });
-
-        // Write to payments collection
-        const paymentRef = db.collection('payments').doc(order_id);
-        transaction.set(paymentRef, {
-          orderId: order_id,
-          status: 'settlement',
-          midtransResponse: req.body,
-          updatedAt: new Date().toISOString(),
-        });
-      });
-
-      console.log(`[SUCCESS] Order ${order_id} berhasil diproses dan stok dikurangi.`);
-    } else if (isFailed) {
-      // Update payment status to failed, leave stock intact
-      await db.runTransaction(async (transaction) => {
-        const orderRef = db.collection('orders').doc(order_id);
-        transaction.update(orderRef, {
-          status: 'menunggu_pembayaran', // or set to fail, let's keep it 'menunggu_pembayaran' as per standard checkout retryability or update as needed
-          updatedAt: new Date().toISOString(),
-        });
-
-        const paymentRef = db.collection('payments').doc(order_id);
-        transaction.set(paymentRef, {
-          orderId: order_id,
-          status: transaction_status,
-          midtransResponse: req.body,
-          updatedAt: new Date().toISOString(),
-        });
-      });
-      console.log(`[FAILED] Order ${order_id} gagal pembayaran (Status: ${transaction_status}).`);
-    }
-
-    return res.json({ status: 'success' });
-  } catch (error: any) {
-    console.error('Midtrans Webhook Error:', error);
-    return res.status(500).json({ error: 'Gagal memproses webhook.', message: error.message });
-  }
-});
-
-// 3. ADMIN STATUS UPDATE API ROUTE
+// 1. ADMIN STATUS UPDATE API ROUTE
 // Direct admin endpoint that verifies role admin via decoded claims token before allowing status changes.
 // It also allows the order owner to confirm "selesai" (order completed) because client security rules deny updates.
 app.post('/api/admin/update-order', async (req, res) => {
@@ -302,20 +79,242 @@ app.post('/api/admin/update-order', async (req, res) => {
       }
     }
 
-    const updates: any = {
-      status,
-      updatedAt: new Date().toISOString(),
-    };
+    // Stock reduction transaction on transition to "diproses" for the first time
+    if (status === 'diproses' && orderData.status === 'menunggu_konfirmasi') {
+      try {
+        await db.runTransaction(async (transaction) => {
+          const freshOrderDoc = await transaction.get(orderRef);
+          if (!freshOrderDoc.exists) {
+            throw new Error(`Pesanan ${orderId} tidak ditemukan.`);
+          }
+          const freshOrderData = freshOrderDoc.data();
+          if (!freshOrderData) {
+            throw new Error(`Data pesanan ${orderId} kosong.`);
+          }
+          if (freshOrderData.status !== 'menunggu_konfirmasi') {
+            throw new Error(`Status pesanan bukan "menunggu_konfirmasi", melainkan "${freshOrderData.status}".`);
+          }
 
-    if (courier) updates.courier = courier;
-    if (trackingNumber) updates.trackingNumber = trackingNumber;
+          // Check and reduce stock for each product in the order
+          for (const item of freshOrderData.items || []) {
+            const productRef = db.collection('products').doc(item.productId);
+            const productDoc = await transaction.get(productRef);
+            if (!productDoc.exists) {
+              throw new Error(`Produk "${item.name}" tidak ditemukan di katalog.`);
+            }
 
-    await orderRef.update(updates);
+            const productData = productDoc.data();
+            const currentStock = productData?.stock ?? 0;
+            const newStock = currentStock - item.qty;
+
+            if (newStock < 0) {
+              throw new Error(`Stok produk "${item.name}" tidak mencukupi (Tersedia: ${currentStock}, Dibutuhkan: ${item.qty}).`);
+            }
+
+            transaction.update(productRef, {
+              stock: newStock,
+              updatedAt: new Date().toISOString()
+            });
+          }
+
+          const orderUpdates: any = {
+            status: 'diproses',
+            updatedAt: new Date().toISOString()
+          };
+          if (courier) orderUpdates.courier = courier;
+          if (trackingNumber) orderUpdates.trackingNumber = trackingNumber;
+
+          transaction.update(orderRef, orderUpdates);
+        });
+      } catch (transErr: any) {
+        console.error('Stock reduction transaction failed:', transErr);
+        return res.status(400).json({ error: transErr.message || 'Transaksi pengurangan stok gagal.' });
+      }
+    } else {
+      // Normal update without stock changes
+      const updates: any = {
+        status,
+        updatedAt: new Date().toISOString(),
+      };
+
+      if (courier) updates.courier = courier;
+      if (trackingNumber) updates.trackingNumber = trackingNumber;
+
+      await orderRef.update(updates);
+    }
+
+    // Auto mark-read unread admin notifications for this order (fixes MASALAH 3)
+    try {
+      const adminNotifsSnapshot = await db.collection('notifications')
+        .where('recipientRole', '==', 'admin')
+        .where('orderId', '==', orderId)
+        .where('isRead', '==', false)
+        .get();
+
+      if (!adminNotifsSnapshot.empty) {
+        const batch = db.batch();
+        adminNotifsSnapshot.docs.forEach(docSnap => {
+          batch.update(docSnap.ref, { isRead: true });
+        });
+        await batch.commit();
+      }
+    } catch (notifMarkErr) {
+      console.error('Failed to auto-read admin notifications:', notifMarkErr);
+    }
+
+    // Create notification for the user
+    try {
+      const getStatusText = (s: string) => {
+        switch (s) {
+          case 'menunggu_konfirmasi': return 'Menunggu Konfirmasi';
+          case 'diproses': return 'Diproses';
+          case 'dikirim': return 'Dikirim';
+          case 'selesai': return 'Selesai';
+          default: return s;
+        }
+      };
+
+      const notifRef = db.collection('notifications').doc();
+      await notifRef.set({
+        id: notifRef.id,
+        recipientRole: 'user',
+        recipientUserId: orderData.userId,
+        message: `Pesanan Anda #${orderId} sekarang berstatus ${getStatusText(status)}.`,
+        orderId: orderId,
+        isRead: false,
+        createdAt: new Date().toISOString()
+      });
+    } catch (notifErr) {
+      console.error('Failed to create user status update notification:', notifErr);
+    }
 
     return res.json({ status: 'success', message: 'Status pesanan berhasil diperbarui.' });
   } catch (error: any) {
     console.error('Admin Update Order Error:', error);
     return res.status(500).json({ error: 'Gagal memperbarui status pesanan.', message: error.message });
+  }
+});
+
+// RAJAONGKIR (KOMERCE) API ROUTES
+app.get('/api/destination/domestic-destination', async (req, res) => {
+  try {
+    const search = req.query.search;
+    if (!search) {
+      return res.json({ code: "0200", message: "success", data: [] });
+    }
+    const apiKey = process.env.RAJAONGKIR_API_KEY;
+    if (!apiKey) {
+      console.warn("RAJAONGKIR_API_KEY is missing on the server! Returning mockup destination for fallback.");
+      // Return a nice fallback for demo when API key is not yet set
+      const term = search.toString().toLowerCase();
+      const mockDestinations = [
+        { id: '68244', label: 'Getasan, Kabupaten Semarang, Jawa Tengah' },
+        { id: '110', label: 'Senen, Kota Jakarta Pusat, DKI Jakarta' },
+        { id: '220', label: 'Andir, Kota Bandung, Jawa Barat' },
+        { id: '330', label: 'Tegalsari, Kota Surabaya, Jawa Timur' },
+        { id: '440', label: 'Mlati, Kabupaten Sleman, DI Yogyakarta' },
+        { id: '550', label: 'Banjarsari, Kota Surakarta, Jawa Tengah' },
+      ];
+      const filtered = mockDestinations.filter(d => d.label.toLowerCase().includes(term));
+      return res.json({ code: "0200", message: "success", data: filtered });
+    }
+
+    const url = `https://rajaongkir.komerce.id/api/v1/destination/domestic-destination?search=${encodeURIComponent(search.toString())}`;
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'key': apiKey,
+      }
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error("RajaOngkir API failed:", response.status, errText);
+      return res.status(response.status).json({ error: "RajaOngkir API error", details: errText });
+    }
+
+    const data = await response.json();
+    return res.json(data);
+  } catch (err: any) {
+    console.error("RajaOngkir Destination Error:", err);
+    return res.status(500).json({ error: "Gagal mengambil data tujuan dari RajaOngkir.", message: err.message });
+  }
+});
+
+app.post('/api/calculate/domestic-cost', async (req, res) => {
+  try {
+    const { origin, destination, weight, courier } = req.body;
+    if (!origin || !destination || !weight || !courier) {
+      return res.status(400).json({ error: "Parameter origin, destination, weight, dan courier wajib dikirimkan." });
+    }
+
+    const apiKey = process.env.RAJAONGKIR_API_KEY;
+    if (!apiKey) {
+      console.warn("RAJAONGKIR_API_KEY is missing on the server! Returning fallback shipping costs.");
+      // Return beautiful simulated shipping options
+      const formattedWeightKg = Number(weight) / 1000;
+      const jneCost = Math.round(15000 + formattedWeightKg * 8000);
+      const jntCost = Math.round(13000 + formattedWeightKg * 9000);
+      const sicepatCost = Math.round(14000 + formattedWeightKg * 7500);
+
+      const mockRates = [
+        {
+          code: "jne",
+          name: "Jalur Nugraha Ekakurir (JNE)",
+          costs: [
+            { service: "REG", description: "Layanan Reguler", cost: [{ value: jneCost, etd: "2-3 Hari" }] },
+            { service: "YES", description: "Yakin Esok Sampai", cost: [{ value: jneCost + 10000, etd: "1 Hari" }] }
+          ]
+        },
+        {
+          code: "jnt",
+          name: "J&T Express (J&T)",
+          costs: [
+            { service: "EZ", description: "Layanan Regular", cost: [{ value: jntCost, etd: "2-4 Hari" }] }
+          ]
+        },
+        {
+          code: "sicepat",
+          name: "SiCepat Express",
+          costs: [
+            { service: "REG", description: "Layanan Reguler SiCepat", cost: [{ value: sicepatCost, etd: "2-3 Hari" }] },
+            { service: "BEST", description: "Besok Sampai Tujuan", cost: [{ value: sicepatCost + 8000, etd: "1 Hari" }] }
+          ]
+        }
+      ];
+      return res.json({ code: "0200", message: "success", data: mockRates });
+    }
+
+    const url = `https://rajaongkir.komerce.id/api/v1/calculate/domestic-cost`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'key': apiKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        origin,
+        destination,
+        weight: Number(weight),
+        courier,
+        Origin: origin,
+        Destination: destination,
+        Weight: Number(weight),
+        Courier: courier,
+      })
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error("RajaOngkir cost API failed:", response.status, errText);
+      return res.status(response.status).json({ error: "RajaOngkir Cost API error", details: errText });
+    }
+
+    const data = await response.json();
+    return res.json(data);
+  } catch (err: any) {
+    console.error("RajaOngkir Calculate Cost Error:", err);
+    return res.status(500).json({ error: "Gagal menghitung ongkos kirim dari RajaOngkir.", message: err.message });
   }
 });
 

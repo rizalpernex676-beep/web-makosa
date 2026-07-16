@@ -1,9 +1,9 @@
 import { initializeApp, getApp, getApps } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut as fbSignOut, User as FirebaseUser } from 'firebase/auth';
 import { 
-  getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, query, where, orderBy, getDocFromServer 
+  getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, query, where, orderBy, getDocFromServer, onSnapshot, runTransaction, writeBatch 
 } from 'firebase/firestore';
-import { Product, Article, FAQ, HomepageSection, SiteSettings, Order, UserProfile } from '../types';
+import { Product, Article, FAQ, HomepageSection, SiteSettings, Order, UserProfile, InAppNotification } from '../types';
 import { 
   INITIAL_PRODUCTS, INITIAL_ARTICLES, INITIAL_FAQS, INITIAL_SECTIONS, INITIAL_SETTINGS, INITIAL_ORDERS 
 } from '../data/mockData';
@@ -32,6 +32,12 @@ interface FirestoreErrorInfo {
 export let firebaseEnabled = false;
 export let db: any = null;
 export let auth: any = null;
+export let isSimulated = false;
+
+export function setSimulated(simulated: boolean) {
+  isSimulated = simulated;
+  console.log("Database simulation mode updated:", simulated ? "SIMULATED (LocalStorage)" : "REAL (Firebase)");
+}
 
 // Graceful Firebase Initialization
 try {
@@ -110,7 +116,7 @@ const setLocal = <T>(key: string, value: T): void => {
 export const dbService = {
   // PRODUCTS
   async getProducts(): Promise<Product[]> {
-    if (firebaseEnabled && db) {
+    if (firebaseEnabled && db && !isSimulated) {
       try {
         let isAdmin = false;
         if (auth && auth.currentUser) {
@@ -139,8 +145,39 @@ export const dbService = {
     return getLocal<Product[]>('makosa_products', INITIAL_PRODUCTS);
   },
 
+  subscribeProducts(callback: (products: Product[]) => void): () => void {
+    if (firebaseEnabled && db && !isSimulated) {
+      try {
+        let isAdmin = false;
+        if (auth && auth.currentUser) {
+          isAdmin = auth.currentUser.email === 'farizhakimz7@gmail.com';
+        }
+        const q = isAdmin 
+          ? collection(db, 'products') 
+          : query(collection(db, 'products'), where('isActive', '==', true));
+
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+          const list: Product[] = [];
+          snapshot.forEach((doc) => {
+            list.push({ id: doc.id, ...doc.data() } as Product);
+          });
+          callback(list);
+        }, (err) => {
+          console.error("Firestore real-time products subscription error:", err);
+        });
+        return unsubscribe;
+      } catch (err) {
+        console.error("Firestore products snapshot subscription failed:", err);
+      }
+    }
+    const interval = setInterval(() => {
+      callback(getLocal<Product[]>('makosa_products', INITIAL_PRODUCTS));
+    }, 2000);
+    return () => clearInterval(interval);
+  },
+
   async saveProduct(product: Product): Promise<void> {
-    if (firebaseEnabled && db) {
+    if (firebaseEnabled && db && !isSimulated) {
       try {
         const docRef = doc(db, 'products', product.id);
         await setDoc(docRef, product);
@@ -160,7 +197,7 @@ export const dbService = {
   },
 
   async deleteProduct(id: string): Promise<void> {
-    if (firebaseEnabled && db) {
+    if (firebaseEnabled && db && !isSimulated) {
       try {
         await deleteDoc(doc(db, 'products', id));
         return;
@@ -175,7 +212,7 @@ export const dbService = {
 
   // ARTICLES
   async getArticles(): Promise<Article[]> {
-    if (firebaseEnabled && db) {
+    if (firebaseEnabled && db && !isSimulated) {
       try {
         let isAdmin = false;
         if (auth && auth.currentUser) {
@@ -205,7 +242,7 @@ export const dbService = {
   },
 
   async saveArticle(article: Article): Promise<void> {
-    if (firebaseEnabled && db) {
+    if (firebaseEnabled && db && !isSimulated) {
       try {
         const docRef = doc(db, 'articles', article.id);
         await setDoc(docRef, article);
@@ -225,7 +262,7 @@ export const dbService = {
   },
 
   async deleteArticle(id: string): Promise<void> {
-    if (firebaseEnabled && db) {
+    if (firebaseEnabled && db && !isSimulated) {
       try {
         await deleteDoc(doc(db, 'articles', id));
         return;
@@ -240,7 +277,7 @@ export const dbService = {
 
   // FAQS
   async getFAQs(): Promise<FAQ[]> {
-    if (firebaseEnabled && db) {
+    if (firebaseEnabled && db && !isSimulated) {
       try {
         const querySnapshot = await getDocs(collection(db, 'faqs'));
         const list: FAQ[] = [];
@@ -256,7 +293,7 @@ export const dbService = {
   },
 
   async saveFAQ(faq: FAQ): Promise<void> {
-    if (firebaseEnabled && db) {
+    if (firebaseEnabled && db && !isSimulated) {
       try {
         const docRef = doc(db, 'faqs', faq.id);
         await setDoc(docRef, faq);
@@ -276,7 +313,7 @@ export const dbService = {
   },
 
   async deleteFAQ(id: string): Promise<void> {
-    if (firebaseEnabled && db) {
+    if (firebaseEnabled && db && !isSimulated) {
       try {
         await deleteDoc(doc(db, 'faqs', id));
         return;
@@ -291,7 +328,7 @@ export const dbService = {
 
   // SETTINGS
   async getSettings(): Promise<SiteSettings> {
-    if (firebaseEnabled && db) {
+    if (firebaseEnabled && db && !isSimulated) {
       try {
         const docSnap = await getDoc(doc(db, 'settings', 'general'));
         if (docSnap.exists()) {
@@ -305,7 +342,7 @@ export const dbService = {
   },
 
   async saveSettings(settings: SiteSettings): Promise<void> {
-    if (firebaseEnabled && db) {
+    if (firebaseEnabled && db && !isSimulated) {
       try {
         await setDoc(doc(db, 'settings', 'general'), settings);
         return;
@@ -318,7 +355,7 @@ export const dbService = {
 
   // HOMEPAGE SECTIONS
   async getHomepageSections(): Promise<HomepageSection[]> {
-    if (firebaseEnabled && db) {
+    if (firebaseEnabled && db && !isSimulated) {
       try {
         const querySnapshot = await getDocs(collection(db, 'homepageContent'));
         const list: HomepageSection[] = [];
@@ -334,7 +371,7 @@ export const dbService = {
   },
 
   async saveHomepageSection(section: HomepageSection): Promise<void> {
-    if (firebaseEnabled && db) {
+    if (firebaseEnabled && db && !isSimulated) {
       try {
         await setDoc(doc(db, 'homepageContent', section.id), section);
         return;
@@ -353,7 +390,7 @@ export const dbService = {
   },
 
   async deleteHomepageSection(id: string): Promise<void> {
-    if (firebaseEnabled && db) {
+    if (firebaseEnabled && db && !isSimulated) {
       try {
         await deleteDoc(doc(db, 'homepageContent', id));
         return;
@@ -368,7 +405,7 @@ export const dbService = {
 
   // ORDERS
   async getOrders(): Promise<Order[]> {
-    if (firebaseEnabled && db) {
+    if (firebaseEnabled && db && !isSimulated) {
       try {
         // If not logged in, return empty immediately instead of querying (prevents permission denied)
         if (!auth || !auth.currentUser) {
@@ -401,7 +438,7 @@ export const dbService = {
   },
 
   async getOrdersByUser(userId: string): Promise<Order[]> {
-    if (firebaseEnabled && db) {
+    if (firebaseEnabled && db && !isSimulated) {
       try {
         // If not logged in, return empty immediately
         if (!auth || !auth.currentUser) {
@@ -422,10 +459,65 @@ export const dbService = {
     return orders.filter(o => o.userId === userId);
   },
 
-  async saveOrder(order: Order): Promise<void> {
-    if (firebaseEnabled && db) {
+  subscribeOrders(role: 'admin' | 'user', userId: string, callback: (orders: Order[]) => void): () => void {
+    if (firebaseEnabled && db && auth && !isSimulated) {
       try {
-        await setDoc(doc(db, 'orders', order.id), order);
+        const isAdmin = role === 'admin';
+        const targetUserId = isAdmin ? userId : (auth.currentUser ? auth.currentUser.uid : userId);
+        const q = isAdmin
+          ? collection(db, 'orders')
+          : query(collection(db, 'orders'), where('userId', '==', targetUserId));
+
+        const unsubscribe = onSnapshot(q, (querySnapshot) => {
+          const list: Order[] = [];
+          querySnapshot.forEach((docSnap) => {
+            list.push({ id: docSnap.id, ...docSnap.data() } as Order);
+          });
+          const sorted = list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+          callback(sorted);
+        }, (err) => {
+          console.error("Real-time orders sync error:", err);
+        });
+        return unsubscribe;
+      } catch (err) {
+        console.error("Real-time orders setup error:", err);
+      }
+    }
+    const interval = setInterval(() => {
+      const orders = getLocal<Order[]>('makosa_orders', INITIAL_ORDERS);
+      const filtered = role === 'admin' ? orders : orders.filter(o => o.userId === userId);
+      callback(filtered.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+    }, 2000);
+    return () => clearInterval(interval);
+  },
+
+  async saveOrder(order: Order): Promise<void> {
+    if (firebaseEnabled && db && !isSimulated) {
+      try {
+        const orderRef = doc(db, 'orders', order.id);
+        await runTransaction(db, async (transaction) => {
+          const stockUpdates: { ref: any; newStock: number }[] = [];
+          for (const item of order.items) {
+            const productRef = doc(db, 'products', item.productId);
+            const productSnap = await transaction.get(productRef);
+            if (productSnap.exists()) {
+              const productData = productSnap.data();
+              const currentStock = productData?.stock || 0;
+              const qtyToReduce = item.qty || 0;
+              const newStock = Math.max(0, currentStock - qtyToReduce);
+              stockUpdates.push({ ref: productRef, newStock });
+            }
+          }
+
+          // Execute all writes after all reads have been completed
+          transaction.set(orderRef, order);
+          for (const update of stockUpdates) {
+            transaction.update(update.ref, {
+              stock: update.newStock,
+              updatedAt: new Date().toISOString()
+            });
+          }
+        });
         return;
       } catch (err) {
         handleFirestoreError(err, OperationType.WRITE, `orders/${order.id}`);
@@ -439,16 +531,107 @@ export const dbService = {
       orders.push(order);
     }
     setLocal('makosa_orders', orders);
+
+    // Local storage fallback stock reduction
+    const products = getLocal<Product[]>('makosa_products', INITIAL_PRODUCTS);
+    order.items.forEach(item => {
+      const pIndex = products.findIndex(p => p.id === item.productId);
+      if (pIndex > -1) {
+        products[pIndex].stock = Math.max(0, products[pIndex].stock - item.qty);
+      }
+    });
+    setLocal('makosa_products', products);
+  },
+
+  async deleteOrder(id: string): Promise<void> {
+    if (firebaseEnabled && db && !isSimulated) {
+      try {
+        await deleteDoc(doc(db, 'orders', id));
+        return;
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, `orders/${id}`);
+      }
+    }
+    const orders = await this.getOrders();
+    const filtered = orders.filter(o => o.id !== id);
+    setLocal('makosa_orders', filtered);
   },
 
   async updateOrderStatus(orderId: string, status: Order['status'], courier?: string, trackingNumber?: string): Promise<void> {
-    if (firebaseEnabled && db) {
+    if (firebaseEnabled && db && !isSimulated) {
       try {
-        const docRef = doc(db, 'orders', orderId);
-        const updates: any = { status, updatedAt: new Date().toISOString() };
-        if (courier !== undefined) updates.courier = courier;
-        if (trackingNumber !== undefined) updates.trackingNumber = trackingNumber;
-        await updateDoc(docRef, updates);
+        const orderRef = doc(db, 'orders', orderId);
+        
+        // Update status pesanan, kurir, dan nomor resi via updateDoc
+        const orderUpdates: any = {
+          status,
+          updatedAt: new Date().toISOString()
+        };
+        if (courier !== undefined) orderUpdates.courier = courier;
+        if (trackingNumber !== undefined) orderUpdates.trackingNumber = trackingNumber;
+
+        await updateDoc(orderRef, orderUpdates);
+
+        // 2. Tandai notifikasi admin terkait pesanan ini sebagai sudah dibaca (jika user adalah admin)
+        let isAdminUser = false;
+        try {
+          const idTokenResult = await auth.currentUser?.getIdTokenResult();
+          isAdminUser = !!idTokenResult?.claims?.admin;
+        } catch (e) {
+          console.error("Error checking admin status for notifications:", e);
+        }
+
+        if (isAdminUser) {
+          try {
+            const adminNotifsQuery = query(
+              collection(db, 'notifications'),
+              where('recipientRole', '==', 'admin'),
+              where('orderId', '==', orderId),
+              where('isRead', '==', false)
+            );
+            const adminNotifsSnap = await getDocs(adminNotifsQuery);
+            if (!adminNotifsSnap.empty) {
+              const batch = writeBatch(db);
+              adminNotifsSnap.docs.forEach((docSnap) => {
+                batch.update(docSnap.ref, { isRead: true });
+              });
+              await batch.commit();
+            }
+          } catch (notifErr) {
+            console.error("Gagal memperbarui status notifikasi admin:", notifErr);
+          }
+        }
+
+        // 3. Buat notifikasi untuk customer
+        try {
+          const orderSnap = await getDoc(orderRef);
+          const orderData = orderSnap.data() as Order;
+          if (orderData && orderData.userId) {
+            const getStatusText = (s: string) => {
+              switch (s) {
+                case 'menunggu_konfirmasi': return 'Menunggu Konfirmasi';
+                case 'diproses': return 'Diproses';
+                case 'dikirim': return 'Dikirim';
+                case 'selesai': return 'Selesai';
+                default: return s;
+              }
+            };
+
+            const notifRef = doc(collection(db, 'notifications'));
+            await setDoc(notifRef, {
+              id: notifRef.id,
+              recipientRole: 'user',
+              recipientUserId: orderData.userId,
+              message: `Pesanan Anda #${orderId} sekarang berstatus ${getStatusText(status)}.`,
+              orderId: orderId,
+              isRead: false,
+              createdAt: new Date().toISOString()
+            });
+          }
+        } catch (notifErr) {
+          console.error("Gagal membuat notifikasi pembaruan status untuk customer:", notifErr);
+        }
+
         return;
       } catch (err) {
         handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`);
@@ -462,6 +645,137 @@ export const dbService = {
       if (trackingNumber !== undefined) orders[index].trackingNumber = trackingNumber;
       orders[index].updatedAt = new Date().toISOString();
       setLocal('makosa_orders', orders);
+    }
+  },
+
+  // NOTIFICATIONS
+  async getNotifications(role: 'admin' | 'user', userId?: string): Promise<InAppNotification[]> {
+    if (firebaseEnabled && db && !isSimulated) {
+      try {
+        if (!auth || !auth.currentUser) {
+          return [];
+        }
+
+        let isAdmin = false;
+        try {
+          const idTokenResult = await auth.currentUser.getIdTokenResult();
+          isAdmin = !!idTokenResult?.claims?.admin;
+        } catch (e) {
+          console.error("Error checking admin claims in notifications:", e);
+        }
+
+        let q;
+        if (isAdmin) {
+          q = query(collection(db, 'notifications'), where('recipientRole', '==', 'admin'));
+        } else {
+          q = query(collection(db, 'notifications'), where('recipientUserId', '==', auth.currentUser.uid));
+        }
+
+        const querySnapshot = await getDocs(q);
+        const list: InAppNotification[] = [];
+        querySnapshot.forEach((doc) => {
+          const data = doc.data() as any;
+          if (data) {
+            list.push({
+              id: doc.id,
+              recipientRole: data.recipientRole,
+              recipientUserId: data.recipientUserId,
+              message: data.message,
+              orderId: data.orderId,
+              isRead: data.isRead,
+              createdAt: data.createdAt
+            } as InAppNotification);
+          }
+        });
+        return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      } catch (err) {
+        handleFirestoreError(err, OperationType.LIST, 'notifications');
+      }
+    }
+    const localNotifs = getLocal<InAppNotification[]>('makosa_notifications', []);
+    if (role === 'admin') {
+      return localNotifs.filter(n => n.recipientRole === 'admin').sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    } else {
+      return localNotifs.filter(n => n.recipientRole === 'user' && n.recipientUserId === userId).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    }
+  },
+
+  subscribeNotifications(role: 'admin' | 'user', userId: string, callback: (notifications: InAppNotification[]) => void): () => void {
+    if (firebaseEnabled && db && auth && !isSimulated) {
+      try {
+        const isAdmin = role === 'admin';
+        const q = isAdmin
+          ? query(collection(db, 'notifications'), where('recipientRole', '==', 'admin'))
+          : query(collection(db, 'notifications'), where('recipientUserId', '==', auth.currentUser ? auth.currentUser.uid : userId));
+
+        const unsubscribe = onSnapshot(q, (querySnapshot) => {
+          const list: InAppNotification[] = [];
+          querySnapshot.forEach((docSnap) => {
+            const data = docSnap.data() as any;
+            if (data) {
+              list.push({
+                id: docSnap.id,
+                recipientRole: data.recipientRole,
+                recipientUserId: data.recipientUserId,
+                message: data.message,
+                orderId: data.orderId,
+                isRead: data.isRead,
+                createdAt: data.createdAt
+              } as InAppNotification);
+            }
+          });
+          const sorted = list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+          callback(sorted);
+        }, (err) => {
+          console.error("Real-time notifications sync error:", err);
+        });
+        return unsubscribe;
+      } catch (err) {
+        console.error("Real-time notifications setup error:", err);
+      }
+    }
+    const interval = setInterval(() => {
+      const localNotifs = getLocal<InAppNotification[]>('makosa_notifications', []);
+      const filtered = role === 'admin' 
+        ? localNotifs.filter(n => n.recipientRole === 'admin')
+        : localNotifs.filter(n => n.recipientRole === 'user' && n.recipientUserId === userId);
+      callback(filtered.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+    }, 2000);
+    return () => clearInterval(interval);
+  },
+
+  async createNotification(notif: Omit<InAppNotification, 'id'>): Promise<void> {
+    if (firebaseEnabled && db && !isSimulated) {
+      try {
+        const docRef = doc(collection(db, 'notifications'));
+        const newNotif = { ...notif, id: docRef.id };
+        await setDoc(docRef, newNotif);
+        return;
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, 'notifications');
+      }
+    }
+    const localNotifs = getLocal<InAppNotification[]>('makosa_notifications', []);
+    const newNotif: InAppNotification = { ...notif, id: `notif-${Date.now()}-${Math.random().toString(36).substr(2, 9)}` };
+    localNotifs.push(newNotif);
+    setLocal('makosa_notifications', localNotifs);
+  },
+
+  async markNotificationAsRead(id: string): Promise<void> {
+    if (firebaseEnabled && db && !isSimulated) {
+      try {
+        const docRef = doc(db, 'notifications', id);
+        await updateDoc(docRef, { isRead: true });
+        return;
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `notifications/${id}`);
+      }
+    }
+    const localNotifs = getLocal<InAppNotification[]>('makosa_notifications', []);
+    const index = localNotifs.findIndex(n => n.id === id);
+    if (index > -1) {
+      localNotifs[index].isRead = true;
+      setLocal('makosa_notifications', localNotifs);
     }
   }
 };

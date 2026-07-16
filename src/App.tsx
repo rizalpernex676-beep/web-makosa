@@ -6,13 +6,53 @@ import { ProductDetailView } from './components/ProductDetailView';
 import { CartAndCheckoutView } from './components/CartAndCheckoutView';
 import { OrderAndProfileView } from './components/OrderAndProfileView';
 import { AdminViews } from './components/AdminViews';
-import { dbService, authService, auth } from './lib/db';
-import { Product, Article, FAQ, HomepageSection, SiteSettings, Order, CartItem, UserProfile, OrderStatus } from './types';
+import { KatalogProdukPage, ArtikelTerbaruPage, PusatFAQPage, KebijakanPrivasiPage, SyaratKetentuanPage } from './components/InfoPages';
+import { dbService, authService, auth, setSimulated } from './lib/db';
+import { Product, Article, FAQ, HomepageSection, SiteSettings, Order, CartItem, UserProfile, OrderStatus, InAppNotification } from './types';
+import { DevBar } from './components/DevBar';
 
 export default function App() {
   // Global View Router
   const [currentView, setCurrentView] = useState<string>('home');
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  const [simulationMode, setSimulationMode] = useState<'firebase' | 'guest' | 'user' | 'admin'>('firebase');
+
+  // Active states based on simulation or real auth
+  const activeUser = (() => {
+    if (simulationMode === 'guest') return null;
+    if (simulationMode === 'user') {
+      return {
+        uid: 'simulated-user-123',
+        name: 'Simulated User (Demo)',
+        email: 'user@example.com',
+        photoUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80',
+        phone: '+62 812-3456-7890',
+        address: 'Jl. Mawar No. 123, Desa Manggihan, Getasan, Semarang, Jawa Tengah, 50774',
+        role: 'user' as const,
+        createdAt: new Date().toISOString()
+      };
+    }
+    if (simulationMode === 'admin') {
+      return {
+        uid: 'simulated-admin-123',
+        name: 'Simulated Admin (Demo)',
+        email: 'farizhakimz7@gmail.com',
+        photoUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=100&q=80',
+        phone: '+62 899-9999-999',
+        address: 'Kantor Kepala Desa Manggihan, Getasan, Semarang, 50774',
+        role: 'admin' as const,
+        createdAt: new Date().toISOString()
+      };
+    }
+    return currentUser;
+  })();
+
+  const activeIsAdmin = (() => {
+    if (simulationMode === 'admin') return true;
+    if (simulationMode === 'guest' || simulationMode === 'user') return false;
+    return isAdmin;
+  })();
 
   // Loaded database collections
   const [products, setProducts] = useState<Product[]>([]);
@@ -21,6 +61,8 @@ export default function App() {
   const [sections, setSections] = useState<HomepageSection[]>([]);
   const [settings, setSettings] = useState<SiteSettings | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [notifications, setNotifications] = useState<InAppNotification[]>([]);
+  const [adminSelectedOrderId, setAdminSelectedOrderId] = useState<string | undefined>(undefined);
   const [loading, setLoading] = useState<boolean>(true);
 
   // Cart operations
@@ -38,17 +80,11 @@ export default function App() {
     localStorage.setItem('makosa_cart', JSON.stringify(cart));
   }, [cart]);
 
-  // Load Midtrans Snap.js script dynamically
+  // Sync simulation mode with dbService
   useEffect(() => {
-    const script = document.createElement('script');
-    script.src = 'https://app.sandbox.midtrans.com/snap/snap.js';
-    script.setAttribute('data-client-key', (import.meta as any).env.VITE_MIDTRANS_CLIENT_KEY || 'Mid-client-tiJHZGw601rIUIV7');
-    document.body.appendChild(script);
-    return () => {
-      document.body.removeChild(script);
-    };
-  }, []);
-  
+    setSimulated(simulationMode !== 'firebase');
+  }, [simulationMode]);
+
   // Selection models
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
@@ -92,18 +128,54 @@ export default function App() {
     if (!auth) return;
     const unsubscribe = auth.onAuthStateChanged(async (firebaseUser: any) => {
       try {
+        console.log("onAuthStateChanged triggered. User info:", firebaseUser ? { uid: firebaseUser.uid, email: firebaseUser.email } : "Logged out");
+        
         if (firebaseUser) {
+          // Reset simulation mode to firebase on real login to avoid confusing behavior
+          setSimulationMode('firebase');
+
+          let adminClaim = false;
+          try {
+            // Force refresh token to get the absolute latest claims
+            const idTokenResult = await firebaseUser.getIdTokenResult(true);
+            adminClaim = idTokenResult?.claims?.admin === true;
+            console.log(`getIdTokenResult details - uid: ${firebaseUser.uid}, email: ${firebaseUser.email}, claims.admin: ${adminClaim}`);
+          } catch (tokErr) {
+            console.error("Failed to fetch fresh ID token result:", tokErr);
+          }
+
+          setIsAdmin(adminClaim);
+
           // Get the fresh user profile
-          const freshProfile = await authService.getProfile(firebaseUser.uid);
-          if (freshProfile) {
-            setCurrentUser(freshProfile);
-            localStorage.setItem('makosa_current_user', JSON.stringify(freshProfile));
-          } else {
+          let freshProfile = await authService.getProfile(firebaseUser.uid);
+          if (!freshProfile) {
             const cachedUser = authService.getCurrentUser();
             if (cachedUser && cachedUser.uid === firebaseUser.uid) {
-              setCurrentUser(cachedUser);
+              freshProfile = cachedUser;
+            } else {
+              // Create profile if none exists
+              freshProfile = {
+                uid: firebaseUser.uid,
+                name: firebaseUser.displayName || 'Pengguna Baru',
+                email: firebaseUser.email || '',
+                photoUrl: firebaseUser.photoURL || 'https://lh3.googleusercontent.com/aida-public/AB6AXuAeuJ5vxoE888QbH64AQzcZiMbkiwvCl9U2tIQyx0rN5HCTEIWQap0XeWun0cvvzYziIgzaQ1RGLvZxy_Ou3aj--luquUN5-O36XH0L-sPARE82295cXDRLe4TLRQwjfxdU4-EN1p-Wk6LXHesX8VjKSEgASNEHfW1tQuIvTKRFJMcIfHskPn2adTX5gGDvxEmthhg3-f90BP6Syf6PnTnY3vJuaFUQcx3EwUl1wRxSyyXC67x46pYx',
+                phone: '',
+                address: '',
+                role: adminClaim ? 'admin' : 'user',
+                createdAt: new Date().toISOString()
+              };
+              await authService.saveProfile(freshProfile);
             }
           }
+
+          // Sync the local profile role with current claim
+          const updatedProfile = {
+            ...freshProfile,
+            role: (adminClaim ? 'admin' : 'user') as 'admin' | 'user'
+          };
+          
+          setCurrentUser(updatedProfile);
+          localStorage.setItem('makosa_current_user', JSON.stringify(updatedProfile));
 
           // Reload collections now that we are authenticated (different role permissions)
           const [prodList, artList, orderList] = await Promise.all([
@@ -117,6 +189,7 @@ export default function App() {
         } else {
           // User is logged out, clear order list and load guest-accessible products and articles
           setCurrentUser(null);
+          setIsAdmin(false);
           setOrders([]);
           const [prodList, artList] = await Promise.all([
             dbService.getProducts(),
@@ -132,23 +205,56 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // 2. Synchronize user specific orders
+  // 1d. Real-time Products & Stock Subscription
+  useEffect(() => {
+    const unsubscribe = dbService.subscribeProducts((freshProducts) => {
+      setProducts(freshProducts);
+    });
+    return () => unsubscribe();
+  }, [simulationMode]);
+
+  // 1c. Real-time Notifications Subscription
+  useEffect(() => {
+    if (!activeUser) {
+      setNotifications([]);
+      return;
+    }
+    const unsubscribe = dbService.subscribeNotifications(activeUser.role, activeUser.uid, (freshNotifs) => {
+      setNotifications(freshNotifs);
+    });
+    return () => unsubscribe();
+  }, [activeUser]);
+
+  // 2. Real-time Orders Subscription
   const [userOrders, setUserOrders] = useState<Order[]>([]);
   useEffect(() => {
-    if (currentUser) {
-      dbService.getOrdersByUser(currentUser.uid).then(list => {
-        setUserOrders(list || []);
-      });
-    } else {
+    if (!activeUser) {
+      setOrders([]);
       setUserOrders([]);
+      return;
     }
-  }, [currentUser, orders]);
+
+    if (activeUser.role === 'admin') {
+      const unsubscribe = dbService.subscribeOrders('admin', activeUser.uid, (freshOrders) => {
+        setOrders(freshOrders);
+        setUserOrders(freshOrders);
+      });
+      return () => unsubscribe();
+    } else {
+      const unsubscribe = dbService.subscribeOrders('user', activeUser.uid, (freshOrders) => {
+        setUserOrders(freshOrders);
+        setOrders(freshOrders);
+      });
+      return () => unsubscribe();
+    }
+  }, [activeUser]);
 
   // 3. User Authentication Controls
   const handleGoogleLogin = async () => {
     try {
       const profile = await authService.loginWithGoogle();
       setCurrentUser(profile);
+      setSimulationMode('firebase');
     } catch (err) {
       console.error("Login trigger failed:", err);
     }
@@ -158,6 +264,7 @@ export default function App() {
     try {
       await authService.logout();
       setCurrentUser(null);
+      setSimulationMode('firebase');
       setCurrentView('home');
     } catch (err) {
       console.error("Logout trigger failed:", err);
@@ -169,117 +276,109 @@ export default function App() {
     setCurrentUser(updated);
   };
 
-  // 4. Shopping Cart Handlers
-  const handleAddToCart = async (product: Product, quantity: number = 1) => {
-    try {
-      // Get fresh product to validate real-time stock
-      const freshProds = await dbService.getProducts();
-      const dbProduct = freshProds.find(p => p.id === product.id);
-      const stock = dbProduct ? dbProduct.stock : product.stock;
+  // 4. WhatsApp Order Flow & Handlers
+  const handleOrderNow = async (product: Product, quantity: number = 1) => {
+    // Store pending order details in localStorage for post-login recovery
+    localStorage.setItem('makosa_pending_order', JSON.stringify({ productId: product.id, quantity }));
 
-      if (stock < quantity) {
-        alert(`Maaf, stok produk "${product.name}" tidak mencukupi (Tersedia: ${stock}).`);
+    if (!activeUser) {
+      alert("Silakan masuk dengan akun Google Anda terlebih dahulu untuk memproses pesanan.");
+      try {
+        await handleGoogleLogin();
+      } catch (err) {
+        console.error("Login failed:", err);
+      }
+      return;
+    }
+
+    setCart([{ product, quantity }]);
+    setCurrentView('cart');
+  };
+
+  // Pending order auto-recovery hook after successful Google login
+  useEffect(() => {
+    if (activeUser && products.length > 0) {
+      const pendingStr = localStorage.getItem('makosa_pending_order');
+      if (pendingStr) {
+        try {
+          const pending = JSON.parse(pendingStr);
+          localStorage.removeItem('makosa_pending_order');
+          const foundProduct = products.find(p => p.id === pending.productId);
+          if (foundProduct) {
+            setCart([{ product: foundProduct, quantity: pending.quantity }]);
+            setCurrentView('cart');
+          }
+        } catch (e) {
+          console.error("Error processing pending order:", e);
+        }
+      }
+    }
+  }, [activeUser, products]);
+
+  // 5. Place and Process Order via WhatsApp
+  const handleCheckoutComplete = async (
+    shippingAddress: string,
+    phone: string,
+    fullName: string,
+    shippingEstimate: number | null,
+    courier: string,
+    courierService: string,
+    destinationAreaId: string
+  ) => {
+    if (!activeUser || cart.length === 0) return;
+
+    try {
+      // Sync checkout recipient details back to User Profile in Firestore if empty or changed
+      const rawAddress = shippingAddress.split(', Kecamatan/Kota:')[0];
+      if (!activeUser.address || activeUser.address !== rawAddress || !activeUser.phone || activeUser.phone !== phone || activeUser.name !== fullName) {
+        const updatedProfile = {
+          ...activeUser,
+          name: fullName,
+          phone: phone,
+          address: rawAddress
+        };
+        await authService.saveProfile(updatedProfile);
+        setCurrentUser(updatedProfile);
+      }
+
+      const orderItem = cart[0];
+      const itemsSubtotal = orderItem.product.price * orderItem.quantity;
+
+      // Fetch latest products to validate real-time stock
+      const freshProds = await dbService.getProducts();
+      const dbProduct = freshProds.find(p => p.id === orderItem.product.id);
+      const currentStock = dbProduct ? dbProduct.stock : orderItem.product.stock;
+
+      if (currentStock < orderItem.quantity) {
+        alert(`Maaf, stok produk "${orderItem.product.name}" tidak mencukupi (Tersedia: ${currentStock}).`);
         return;
       }
 
-      setCart((prev) => {
-        const idx = prev.findIndex(item => item.product.id === product.id);
-        if (idx > -1) {
-          const totalRequested = prev[idx].quantity + quantity;
-          if (totalRequested > stock) {
-            alert(`Maaf, tidak bisa menambah ke keranjang. Stok total "${product.name}" hanya ada ${stock}.`);
-            return prev;
-          }
-          const copy = [...prev];
-          copy[idx].quantity = totalRequested;
-          return copy;
-        }
-        return [...prev, { product: dbProduct || product, quantity }];
-      });
-      alert(`Berhasil menambahkan ${product.name} ke keranjang belanja!`);
-    } catch (err) {
-      console.error("Gagal menambahkan ke keranjang:", err);
-      alert("Terjadi kesalahan saat memvalidasi stok.");
-    }
-  };
-
-  const handleUpdateCartQty = async (product: Product, delta: number) => {
-    try {
-      if (delta > 0) {
-        const freshProds = await dbService.getProducts();
-        const dbProduct = freshProds.find(p => p.id === product.id);
-        const stock = dbProduct ? dbProduct.stock : product.stock;
-
-        const currentQty = cart.find(item => item.product.id === product.id)?.quantity || 0;
-        if (currentQty + delta > stock) {
-          alert(`Maaf, stok produk "${product.name}" tidak mencukupi (Tersedia: ${stock}).`);
-          return;
-        }
-      }
-
-      setCart((prev) => {
-        const idx = prev.findIndex(item => item.product.id === product.id);
-        if (idx > -1) {
-          const copy = [...prev];
-          const newQty = copy[idx].quantity + delta;
-          if (newQty <= 0) {
-            return copy.filter(item => item.product.id !== product.id);
-          }
-          copy[idx].quantity = newQty;
-          return copy;
-        }
-        return prev;
-      });
-    } catch (err) {
-      console.error("Gagal mengubah kuantitas keranjang:", err);
-    }
-  };
-
-  const handleRemoveCartItem = (product: Product) => {
-    setCart(prev => prev.filter(item => item.product.id !== product.id));
-  };
-
-  // 5. Place and Process Order Transaction
-  const handleCheckoutComplete = async (shippingAddress: string, phone: string, fullName: string) => {
-    if (!currentUser) return;
-
-    try {
-      // 1. Fetch latest products and validate stock before creating order
-      const freshProds = await dbService.getProducts();
-      for (const item of cart) {
-        const dbProduct = freshProds.find(p => p.id === item.product.id);
-        const currentStock = dbProduct ? dbProduct.stock : item.product.stock;
-        if (currentStock < item.quantity) {
-          alert(`Maaf, stok produk "${item.product.name}" tidak mencukupi (Tersedia: ${currentStock}). Silakan kurangi kuantitas.`);
-          return;
-        }
-      }
-
-      const itemsSubtotal = cart.reduce((sum, item) => sum + (item.product.price * item.quantity), 0);
-      const flatShippingFee = 15000;
-      const flatServiceFee = 1000;
-      const totalBill = itemsSubtotal + flatShippingFee + flatServiceFee;
-
-      // Create unique order ID
+      // Generate unique order ID
       const orderId = 'MKS-' + Math.floor(100000 + Math.random() * 900000);
 
       // Create domain transaction model
       const newOrder: Order = {
         id: orderId,
-        userId: currentUser.uid,
+        userId: activeUser.uid,
         userName: fullName,
         phone,
         shippingAddress,
-        items: cart.map(item => ({
-          productId: item.product.id,
-          name: item.product.name,
-          qty: item.quantity,
-          price: item.product.price,
-          image: item.product.images[0]
-        })),
-        totalPrice: totalBill,
-        status: 'menunggu_pembayaran', // Wajib status awal 'menunggu_pembayaran'
-        courier: '',
+        items: [
+          {
+            productId: orderItem.product.id,
+            name: orderItem.product.name,
+            qty: orderItem.quantity,
+            price: orderItem.product.price,
+            image: orderItem.product.images[0] || ''
+          }
+        ],
+        totalPrice: itemsSubtotal, // Subtotal produk saja, tanpa ongkir final
+        shippingEstimate, // Angka estimasi ongkir yang dipilih, boleh null jika user skip
+        status: 'menunggu_konfirmasi', // Status awal 'menunggu_konfirmasi'
+        courier,
+        courierService,
+        destinationAreaId,
         trackingNumber: '',
         paymentId: '',
         createdAt: new Date().toISOString(),
@@ -289,69 +388,42 @@ export default function App() {
       // Record order in Firestore (client-side allowed by security rules)
       await dbService.saveOrder(newOrder);
 
-      // Call our secure Express server API to generate Midtrans Snap token
-      let idToken = '';
-      if (authService.isFirebaseEnabled() && auth) {
-        idToken = await auth.currentUser?.getIdToken() || '';
-      }
-
-      const response = await fetch('/api/checkout/snap', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${idToken}`
-        },
-        body: JSON.stringify({ orderId: orderId })
-      });
-
-      if (!response.ok) {
-        const errDetails = await response.text();
-        throw new Error(`Gagal memproses pembayaran dengan server. Details: ${errDetails}`);
-      }
-
-      const { token, redirect_url } = await response.json();
-
-      // Trigger Midtrans Snap UI or fallback to direct URL
-      if ((window as any).snap) {
-        (window as any).snap.pay(token, {
-          onSuccess: function (result: any) {
-            console.log('Payment success:', result);
-            alert('Pembayaran sukses diproses! Terima kasih.');
-            setCart([]);
-            // Refresh products and orders
-            dbService.getProducts().then(fresh => setProducts(fresh));
-            dbService.getOrders().then(fresh => setOrders(fresh));
-            setCurrentView('orders');
-          },
-          onPending: function (result: any) {
-            console.log('Payment pending:', result);
-            alert('Menunggu pembayaran Anda.');
-            setCart([]);
-            dbService.getProducts().then(fresh => setProducts(fresh));
-            dbService.getOrders().then(fresh => setOrders(fresh));
-            setCurrentView('orders');
-          },
-          onError: function (result: any) {
-            console.error('Payment error:', result);
-            alert('Terjadi kesalahan pembayaran. Silakan coba lagi.');
-          },
-          onClose: function () {
-            console.log('Customer closed payment popup without finishing');
-            setCart([]);
-            dbService.getProducts().then(fresh => setProducts(fresh));
-            dbService.getOrders().then(fresh => setOrders(fresh));
-            setCurrentView('orders');
-          }
+      // Create notification for Admin (fixes in-app notification requirement)
+      try {
+        await dbService.createNotification({
+          recipientRole: 'admin',
+          recipientUserId: null,
+          message: `Pesanan baru #${orderId} dari ${fullName}`,
+          orderId: orderId,
+          isRead: false,
+          createdAt: new Date().toISOString()
         });
-      } else {
-        // Fallback: Open Midtrans Snap redirect URL in a new tab if popup is blocked
-        alert('Mengalihkan Anda ke halaman pembayaran Midtrans...');
-        window.open(redirect_url, '_blank');
-        setCart([]);
-        dbService.getProducts().then(fresh => setProducts(fresh));
-        dbService.getOrders().then(fresh => setOrders(fresh));
-        setCurrentView('orders');
+      } catch (notifErr) {
+        console.error("Gagal membuat notifikasi admin:", notifErr);
       }
+
+      // Clear selection
+      setCart([]);
+
+      // Dynamic redirect to WhatsApp Admin (fixes Bug 1)
+      const adminWhatsApp = settings?.contactWhatsApp || '6282322418043';
+      let cleanWhatsApp = adminWhatsApp.replace(/[^0-9]/g, '');
+      if (cleanWhatsApp.startsWith('0')) {
+        cleanWhatsApp = '62' + cleanWhatsApp.substring(1);
+      } else if (cleanWhatsApp.startsWith('8')) {
+        cleanWhatsApp = '62' + cleanWhatsApp;
+      }
+
+      const productSubtotalFormatted = itemsSubtotal.toLocaleString('id-ID');
+      const shippingFormatted = shippingEstimate !== null ? `Rp ${shippingEstimate.toLocaleString('id-ID')}` : 'Tidak dipilih';
+      const courierText = shippingEstimate !== null ? `${courier} - ${courierService}` : 'Belum ditentukan';
+
+      const message = `Halo Admin MAKOSA, saya ingin memesan:\n- ${orderItem.product.name} x${orderItem.quantity} = Rp ${productSubtotalFormatted}\n\nEstimasi ongkir (${courierText}): ${shippingFormatted}\n\nNama: ${fullName}\nAlamat: ${shippingAddress}\nNo. Order: ${orderId}\n\nMohon konfirmasi ketersediaan & total akhir. Terima kasih!`;
+      const encodedMsg = encodeURIComponent(message);
+      const waUrl = `https://wa.me/${cleanWhatsApp}?text=${encodedMsg}`;
+
+      alert("Pesanan berhasil dicatat! Mengalihkan Anda ke WhatsApp Admin...");
+      window.open(waUrl, '_blank');
 
       // Refresh products and orders list
       const [freshProducts, freshOrders] = await Promise.all([
@@ -372,27 +444,8 @@ export default function App() {
 
   const handleCompleteOrder = async (orderId: string) => {
     try {
-      let idToken = '';
-      if (authService.isFirebaseEnabled() && auth) {
-        idToken = await auth.currentUser?.getIdToken() || '';
-      }
+      await dbService.updateOrderStatus(orderId, 'selesai');
 
-      const response = await fetch('/api/admin/update-order', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${idToken}`
-        },
-        body: JSON.stringify({ orderId, status: 'selesai' })
-      });
-
-      if (!response.ok) {
-        const errDetails = await response.json();
-        throw new Error(errDetails.error || 'Gagal mengubah status pesanan.');
-      }
-
-      const freshOrders = await dbService.getOrders();
-      setOrders(freshOrders);
       if (selectedOrder?.id === orderId) {
         setSelectedOrder({
           ...selectedOrder,
@@ -404,6 +457,28 @@ export default function App() {
     } catch (err: any) {
       console.error("Failed to update status to complete:", err);
       alert(`Gagal mengonfirmasi selesai: ${err.message || err}`);
+    }
+  };
+
+  const handleMarkNotificationRead = async (id: string, orderId: string) => {
+    try {
+      await dbService.markNotificationAsRead(id);
+      
+      // Update local state instantly for positive response feel
+      setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
+      
+      if (activeUser?.role === 'admin') {
+        setAdminSelectedOrderId(orderId);
+        setCurrentView('admin-dashboard');
+      } else {
+        const matched = orders.find(o => o.id === orderId);
+        if (matched) {
+          setSelectedOrder(matched);
+        }
+        setCurrentView('orders');
+      }
+    } catch (err) {
+      console.error("Failed to mark notification as read:", err);
     }
   };
 
@@ -457,31 +532,47 @@ export default function App() {
 
   const handleUpdateOrderStatusAdmin = async (orderId: string, status: OrderStatus, courier?: string, trackingNumber?: string) => {
     try {
-      let idToken = '';
-      if (authService.isFirebaseEnabled() && auth) {
-        idToken = await auth.currentUser?.getIdToken() || '';
-      }
-
-      const response = await fetch('/api/admin/update-order', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${idToken}`
-        },
-        body: JSON.stringify({ orderId, status, courier, trackingNumber })
-      });
-
-      if (!response.ok) {
-        const errDetails = await response.json();
-        throw new Error(errDetails.error || 'Gagal mengubah status order.');
-      }
-
+      await dbService.updateOrderStatus(orderId, status, courier, trackingNumber);
       alert('Status pesanan berhasil diperbarui!');
-      const list = await dbService.getOrders();
-      setOrders(list);
     } catch (err: any) {
       console.error("Gagal mengubah status pesanan oleh admin:", err);
       alert(`Gagal: ${err.message || err}`);
+    }
+  };
+
+  const handleDeleteOrderAdmin = async (id: string) => {
+    try {
+      await dbService.deleteOrder(id);
+      const list = await dbService.getOrders();
+      setOrders(list);
+    } catch (err: any) {
+      console.error("Gagal menghapus riwayat pesanan:", err);
+      alert(`Gagal menghapus: ${err.message || err}`);
+      throw err;
+    }
+  };
+
+  const handleUpdateOrderStatusUser = async (orderId: string, status: OrderStatus) => {
+    try {
+      await dbService.updateOrderStatus(orderId, status);
+      const list = await dbService.getOrders();
+      setOrders(list || []);
+      alert('Pesanan berhasil diselesaikan! Terima kasih.');
+    } catch (err: any) {
+      console.error("Gagal menyelesaikan pesanan:", err);
+      alert(`Gagal: ${err.message || err}`);
+    }
+  };
+
+  const handleDeleteOrderUser = async (id: string) => {
+    try {
+      await dbService.deleteOrder(id);
+      const list = await dbService.getOrders();
+      setOrders(list || []);
+      alert('History pesanan berhasil dihapus.');
+    } catch (err: any) {
+      console.error("Gagal menghapus riwayat pesanan:", err);
+      alert(`Gagal menghapus: ${err.message || err}`);
     }
   };
 
@@ -490,7 +581,7 @@ export default function App() {
     return (
       <div className="min-h-screen bg-zinc-50 flex flex-col items-center justify-center space-y-4">
         <svg className="animate-spin h-10 w-10 text-[#154212]" viewBox="0 0 24 24">
-          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
         </svg>
         <p className="text-sm font-semibold text-[#154212] tracking-wide uppercase">Memuat Data Portal MAKOSA Desa Manggihan...</p>
@@ -501,43 +592,58 @@ export default function App() {
   // Check if Admin Panel view is requested
   const isAdminView = currentView.startsWith('admin-');
 
-  if (isAdminView && currentUser?.role === 'admin') {
+  if (isAdminView && activeIsAdmin) {
     return (
-      <AdminViews
-        products={products}
-        articles={articles}
-        faqs={faqs}
-        sections={sections}
-        settings={settings}
-        orders={orders}
-        onSaveProduct={handleSaveProductAdmin}
-        onDeleteProduct={handleDeleteProductAdmin}
-        onSaveArticle={handleSaveArticleAdmin}
-        onDeleteArticle={handleDeleteArticleAdmin}
-        onSaveFAQ={handleSaveFAQAdmin}
-        onDeleteFAQ={handleDeleteFAQAdmin}
-        onSaveSettings={handleSaveSettingsAdmin}
-        onSaveSection={handleSaveSectionAdmin}
-        onUpdateOrderStatus={handleUpdateOrderStatusAdmin}
-        onLogout={handleLogout}
-      />
+      <>
+        <AdminViews
+          products={products}
+          articles={articles}
+          faqs={faqs}
+          sections={sections}
+          settings={settings}
+          orders={orders}
+          onSaveProduct={handleSaveProductAdmin}
+          onDeleteProduct={handleDeleteProductAdmin}
+          onSaveArticle={handleSaveArticleAdmin}
+          onDeleteArticle={handleDeleteArticleAdmin}
+          onSaveFAQ={handleSaveFAQAdmin}
+          onDeleteFAQ={handleDeleteFAQAdmin}
+          onSaveSettings={handleSaveSettingsAdmin}
+          onSaveSection={handleSaveSectionAdmin}
+          onUpdateOrderStatus={handleUpdateOrderStatusAdmin}
+          onDeleteOrder={handleDeleteOrderAdmin}
+          onLogout={handleLogout}
+          preSelectedOrderId={adminSelectedOrderId}
+          notifications={notifications}
+          onMarkNotificationRead={handleMarkNotificationRead}
+        />
+        <DevBar
+          simulationMode={simulationMode}
+          setSimulationMode={setSimulationMode}
+          realUser={currentUser ? { uid: currentUser.uid, email: currentUser.email } : null}
+          realIsAdmin={isAdmin}
+        />
+      </>
     );
   }
 
   return (
     <div className="flex flex-col min-h-screen bg-white text-zinc-900 transition-colors">
       <Navbar 
-        currentUser={currentUser}
+        currentUser={activeUser}
+        isAdmin={activeIsAdmin}
         currentView={currentView}
         onNavigate={(view) => {
           setCurrentView(view);
           setSelectedProduct(null);
           setSelectedOrder(null);
+          setAdminSelectedOrderId(undefined);
         }}
-        cartCount={cart.reduce((sum, item) => sum + item.quantity, 0)}
         onLogin={handleGoogleLogin}
         onLogout={handleLogout}
         settings={settings}
+        notifications={notifications}
+        onMarkNotificationRead={handleMarkNotificationRead}
       />
 
       <main className="flex-grow">
@@ -549,9 +655,38 @@ export default function App() {
             sections={sections}
             settings={settings}
             onViewProduct={(p) => setSelectedProduct(p)}
-            onAddToCart={(p) => handleAddToCart(p, 1)}
+            onOrderNow={(p, qty) => handleOrderNow(p, qty)}
             onNavigate={(view) => setCurrentView(view)}
           />
+        )}
+
+        {currentView === 'katalog-produk' && !selectedProduct && (
+          <KatalogProdukPage 
+            products={products}
+            onViewProduct={(p) => setSelectedProduct(p)}
+            onOrderNow={(p, qty) => handleOrderNow(p, qty)}
+          />
+        )}
+
+        {currentView === 'artikel-terbaru' && (
+          <ArtikelTerbaruPage 
+            articles={articles}
+          />
+        )}
+
+        {currentView === 'pusat-faq' && (
+          <PusatFAQPage 
+            faqs={faqs}
+            settings={settings}
+          />
+        )}
+
+        {currentView === 'kebijakan-privasi' && (
+          <KebijakanPrivasiPage />
+        )}
+
+        {currentView === 'syarat-ketentuan' && (
+          <SyaratKetentuanPage />
         )}
 
         {selectedProduct && (
@@ -559,8 +694,8 @@ export default function App() {
             product={selectedProduct}
             allProducts={products}
             onBack={() => setSelectedProduct(null)}
-            onAddToCart={(prod, count) => {
-              handleAddToCart(prod, count);
+            onOrderNow={(prod, count) => {
+              handleOrderNow(prod, count);
               setSelectedProduct(null);
             }}
             onViewProduct={(p) => setSelectedProduct(p)}
@@ -570,9 +705,8 @@ export default function App() {
         {currentView === 'cart' && (
           <CartAndCheckoutView 
             cart={cart}
-            currentUser={currentUser}
-            onUpdateQty={handleUpdateCartQty}
-            onRemoveItem={handleRemoveCartItem}
+            currentUser={activeUser}
+            settings={settings}
             onLogin={handleGoogleLogin}
             onCheckoutComplete={handleCheckoutComplete}
             onNavigate={(view) => setCurrentView(view)}
@@ -583,12 +717,14 @@ export default function App() {
           <div className="max-w-7xl mx-auto px-6 md:px-10 py-16">
             <OrderAndProfileView 
               orders={userOrders}
-              currentUser={currentUser}
+              currentUser={activeUser}
               onSaveProfile={handleSaveProfile}
               onLogout={handleLogout}
               onNavigate={(view) => setCurrentView(view)}
               selectedOrder={selectedOrder}
               onSelectOrder={setSelectedOrder}
+              onUpdateStatus={handleUpdateOrderStatusUser}
+              onDeleteOrder={handleDeleteOrderUser}
             />
           </div>
         )}
@@ -601,6 +737,13 @@ export default function App() {
           setSelectedProduct(null);
           setSelectedOrder(null);
         }} 
+      />
+
+      <DevBar
+        simulationMode={simulationMode}
+        setSimulationMode={setSimulationMode}
+        realUser={currentUser ? { uid: currentUser.uid, email: currentUser.email } : null}
+        realIsAdmin={isAdmin}
       />
     </div>
   );

@@ -17,7 +17,7 @@ export const Footer: React.FC<FooterProps> = ({ settings, onNavigate }) => {
             <img 
               alt="MAKOSA Logo" 
               className="h-12 w-auto object-contain" 
-              src={settings.logoUrl} 
+              src={settings.logoUrl || undefined} 
             />
             <span className="text-2xl font-bold text-[#154212] font-display">
               {settings.siteName}
@@ -69,17 +69,17 @@ export const Footer: React.FC<FooterProps> = ({ settings, onNavigate }) => {
               </a>
             </li>
             <li>
-              <a href="#produk" className="hover:text-[#154212] transition-colors">
+              <a href="#" onClick={(e) => { e.preventDefault(); onNavigate('katalog-produk'); }} className="hover:text-[#154212] transition-colors">
                 Katalog Produk
               </a>
             </li>
             <li>
-              <a href="#artikel" className="hover:text-[#154212] transition-colors">
+              <a href="#" onClick={(e) => { e.preventDefault(); onNavigate('artikel-terbaru'); }} className="hover:text-[#154212] transition-colors">
                 Artikel Terbaru
               </a>
             </li>
             <li>
-              <a href="#faq" className="hover:text-[#154212] transition-colors">
+              <a href="#" onClick={(e) => { e.preventDefault(); onNavigate('pusat-faq'); }} className="hover:text-[#154212] transition-colors">
                 Pusat FAQ
               </a>
             </li>
@@ -93,7 +93,7 @@ export const Footer: React.FC<FooterProps> = ({ settings, onNavigate }) => {
           </h4>
           <ul className="space-y-3 text-sm text-zinc-600">
             <li>
-              <a href="#faq" className="hover:text-[#154212] transition-colors">
+              <a href="#" onClick={(e) => { e.preventDefault(); onNavigate('pusat-faq'); }} className="hover:text-[#154212] transition-colors">
                 Pusat Bantuan / FAQ
               </a>
             </li>
@@ -103,12 +103,12 @@ export const Footer: React.FC<FooterProps> = ({ settings, onNavigate }) => {
               </a>
             </li>
             <li>
-              <a href="#" className="hover:text-[#154212] transition-colors">
+              <a href="#" onClick={(e) => { e.preventDefault(); onNavigate('kebijakan-privasi'); }} className="hover:text-[#154212] transition-colors">
                 Kebijakan Privasi
               </a>
             </li>
             <li>
-              <a href="#" className="hover:text-[#154212] transition-colors">
+              <a href="#" onClick={(e) => { e.preventDefault(); onNavigate('syarat-ketentuan'); }} className="hover:text-[#154212] transition-colors">
                 Syarat & Ketentuan
               </a>
             </li>

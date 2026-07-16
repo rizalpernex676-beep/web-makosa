@@ -3,7 +3,7 @@ import {
   BarChart, ShoppingCart, Layers, Globe, FileText, HelpCircle, Settings, LogOut, Search, Bell, 
   Trash2, Edit, Plus, Save, Download, Filter, AlertTriangle, CheckCircle, Flame, Leaf, Move, MapPin
 } from 'lucide-react';
-import { Product, Article, FAQ, HomepageSection, SiteSettings, Order, OrderStatus } from '../types';
+import { Product, Article, FAQ, HomepageSection, SiteSettings, Order, OrderStatus, InAppNotification, HeroMediaItem } from '../types';
 
 interface AdminViewsProps {
   products: Product[];
@@ -21,16 +21,21 @@ interface AdminViewsProps {
   onSaveSettings: (settings: SiteSettings) => void;
   onSaveSection: (section: HomepageSection) => void;
   onUpdateOrderStatus: (orderId: string, status: OrderStatus, courier?: string, trackingNumber?: string) => void;
+  onDeleteOrder: (id: string) => Promise<void>;
   onLogout: () => void;
+  preSelectedOrderId?: string;
+  notifications: InAppNotification[];
+  onMarkNotificationRead: (id: string, orderId: string) => void;
 }
 
 interface CloudinaryUploaderProps {
   currentUrl: string;
   onUploadSuccess: (url: string) => void;
   label?: string;
+  accept?: string;
 }
 
-const CloudinaryUploader: React.FC<CloudinaryUploaderProps> = ({ currentUrl, onUploadSuccess, label = "Unggah Gambar ke Cloudinary" }) => {
+const CloudinaryUploader: React.FC<CloudinaryUploaderProps> = ({ currentUrl, onUploadSuccess, label = "Unggah Gambar ke Cloudinary", accept = "image/*" }) => {
   const [uploading, setUploading] = React.useState(false);
   const [previewUrl, setPreviewUrl] = React.useState(currentUrl);
 
@@ -48,7 +53,10 @@ const CloudinaryUploader: React.FC<CloudinaryUploaderProps> = ({ currentUrl, onU
       formData.append('file', file);
       formData.append('upload_preset', 'makosa_unsigned');
 
-      const response = await fetch('https://api.cloudinary.com/v1_1/hr5roooz/image/upload', {
+      const isVideo = file.type.startsWith('video/');
+      const uploadUrl = `https://api.cloudinary.com/v1_1/hr5roooz/${isVideo ? 'video' : 'image'}/upload`;
+
+      const response = await fetch(uploadUrl, {
         method: 'POST',
         body: formData,
       });
@@ -63,11 +71,18 @@ const CloudinaryUploader: React.FC<CloudinaryUploaderProps> = ({ currentUrl, onU
       onUploadSuccess(uploadedUrl);
     } catch (err) {
       console.error("Cloudinary upload failed:", err);
-      alert("Gagal mengunggah gambar ke Cloudinary. Silakan coba lagi.");
+      alert("Gagal mengunggah file ke Cloudinary. Silakan coba lagi.");
     } finally {
       setUploading(false);
     }
   };
+
+  const isVideoUrl = previewUrl && (
+    previewUrl.endsWith('.mp4') || 
+    previewUrl.endsWith('.webm') || 
+    previewUrl.endsWith('.ogg') ||
+    previewUrl.includes('/video/upload/')
+  );
 
   return (
     <div className="space-y-2 border border-zinc-200 p-4 rounded-xl bg-zinc-50">
@@ -77,17 +92,26 @@ const CloudinaryUploader: React.FC<CloudinaryUploaderProps> = ({ currentUrl, onU
       </div>
       <div className="flex gap-4 items-center">
         {previewUrl && (
-          <img 
-            src={previewUrl} 
-            alt="Preview" 
-            className="w-16 h-16 object-cover rounded-lg border border-zinc-200" 
-            referrerPolicy="no-referrer"
-          />
+          isVideoUrl ? (
+            <video 
+              src={previewUrl} 
+              className="w-16 h-16 object-cover rounded-lg border border-zinc-200 bg-black" 
+              muted 
+              playsInline 
+            />
+          ) : (
+            <img 
+              src={previewUrl} 
+              alt="Preview" 
+              className="w-16 h-16 object-cover rounded-lg border border-zinc-200" 
+              referrerPolicy="no-referrer"
+            />
+          )
         )}
         <div className="flex-grow">
           <input 
             type="file" 
-            accept="image/*" 
+            accept={accept} 
             onChange={handleFileChange} 
             className="block w-full text-xs text-zinc-500
               file:mr-4 file:py-2 file:px-4
@@ -118,16 +142,52 @@ export const AdminViews: React.FC<AdminViewsProps> = ({
   onSaveSettings,
   onSaveSection,
   onUpdateOrderStatus,
-  onLogout
+  onDeleteOrder,
+  onLogout,
+  preSelectedOrderId,
+  notifications,
+  onMarkNotificationRead
 }) => {
   const [activeTab, setActiveTab] = React.useState<'dashboard' | 'orders' | 'products' | 'cms' | 'articles' | 'faq' | 'settings'>('dashboard');
   const [toastMsg, setToastMsg] = React.useState<string | null>(null);
+  const [notifOpen, setNotifOpen] = React.useState(false);
 
   // Modal / Editor States
   const [editingProduct, setEditingProduct] = React.useState<Product | null>(null);
   const [editingArticle, setEditingArticle] = React.useState<Article | null>(null);
   const [editingFAQ, setEditingFAQ] = React.useState<FAQ | null>(null);
   const [selectedAdminOrder, setSelectedAdminOrder] = React.useState<Order | null>(orders[0] || null);
+  const [isDeletingOrder, setIsDeletingOrder] = React.useState(false);
+  const [heroMedia, setHeroMedia] = React.useState<HeroMediaItem[]>([]);
+
+  React.useEffect(() => {
+    const hero = sections.find(s => s.type === 'hero');
+    if (hero) {
+      setHeroMedia(hero.heroMedia || []);
+    }
+  }, [sections]);
+
+  React.useEffect(() => {
+    if (preSelectedOrderId) {
+      const matched = orders.find(o => o.id === preSelectedOrderId);
+      if (matched) {
+        setSelectedAdminOrder(matched);
+        setActiveTab('orders');
+      }
+    }
+  }, [preSelectedOrderId, orders]);
+
+  // Sync selected order with latest list updates (fixes Bug 2)
+  React.useEffect(() => {
+    if (selectedAdminOrder) {
+      const freshOrder = orders.find(o => o.id === selectedAdminOrder.id);
+      if (freshOrder) {
+        setSelectedAdminOrder(freshOrder);
+      }
+    } else if (orders.length > 0) {
+      setSelectedAdminOrder(orders[0]);
+    }
+  }, [orders]);
 
   const triggerToast = (msg: string) => {
     setToastMsg(msg);
@@ -137,7 +197,7 @@ export const AdminViews: React.FC<AdminViewsProps> = ({
   // Helper status styling
   const getStatusStyle = (status: OrderStatus) => {
     switch (status) {
-      case 'menunggu_pembayaran': return 'bg-amber-100 text-amber-800 border-amber-200';
+      case 'menunggu_konfirmasi': return 'bg-amber-100 text-amber-800 border-amber-200';
       case 'diproses': return 'bg-blue-100 text-blue-800 border-blue-200';
       case 'dikirim': return 'bg-indigo-100 text-indigo-800 border-indigo-200';
       case 'selesai': return 'bg-emerald-100 text-emerald-800 border-emerald-200';
@@ -209,10 +269,53 @@ export const AdminViews: React.FC<AdminViewsProps> = ({
           </div>
 
           <div className="flex items-center gap-6">
-            <button className="relative p-2 text-zinc-500 hover:text-[#154212] transition-colors rounded-full hover:bg-zinc-100">
-              <Bell className="w-5 h-5" />
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full"></span>
-            </button>
+            <div className="relative">
+              <button 
+                onClick={() => setNotifOpen(!notifOpen)}
+                className="relative p-2 text-zinc-500 hover:text-[#154212] transition-colors rounded-full hover:bg-zinc-100"
+                title="Notifikasi Admin"
+              >
+                <Bell className="w-5 h-5" />
+                {notifications.filter(n => !n.isRead).length > 0 && (
+                  <span className="absolute top-1 right-1 w-4 h-4 bg-red-600 text-white text-[9px] font-bold rounded-full flex items-center justify-center border-2 border-white animate-pulse">
+                    {notifications.filter(n => !n.isRead).length}
+                  </span>
+                )}
+              </button>
+
+              {/* Notification Popover Dropdown */}
+              {notifOpen && (
+                <div className="absolute right-0 mt-2 w-80 bg-white border border-zinc-200 rounded-xl shadow-xl z-50 overflow-hidden divide-y divide-zinc-100">
+                  <div className="px-4 py-3 bg-[#154212]/5 flex justify-between items-center">
+                    <span className="font-bold text-xs text-[#154212] uppercase tracking-wider">Notifikasi Masuk</span>
+                    {notifications.filter(n => !n.isRead).length > 0 && (
+                      <span className="text-[10px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded">
+                        {notifications.filter(n => !n.isRead).length} Baru
+                      </span>
+                    )}
+                  </div>
+                  <div className="max-h-64 overflow-y-auto custom-scrollbar">
+                    {notifications.length === 0 ? (
+                      <p className="p-4 text-center text-xs text-zinc-400">Tidak ada notifikasi baru.</p>
+                    ) : (
+                      notifications.map((n) => (
+                        <div 
+                          key={n.id}
+                          onClick={() => {
+                            onMarkNotificationRead(n.id, n.orderId);
+                            setNotifOpen(false);
+                          }}
+                          className={`p-4 text-left cursor-pointer transition-colors hover:bg-zinc-50 ${!n.isRead ? 'bg-zinc-50/80 font-semibold' : ''}`}
+                        >
+                          <p className="text-xs text-zinc-800 leading-snug">{n.message}</p>
+                          <p className="text-[9px] text-zinc-400 mt-1">{new Date(n.createdAt).toLocaleString('id-ID')}</p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
             <div className="flex items-center gap-3 pl-6 border-l border-zinc-200">
               <div className="text-right">
                 <p className="text-sm font-bold">Admin Utama</p>
@@ -258,8 +361,8 @@ export const AdminViews: React.FC<AdminViewsProps> = ({
                     <span className="text-xs font-bold text-amber-600 bg-amber-50 px-2 py-1 rounded">Urgent</span>
                   </div>
                   <div className="mt-4">
-                    <p className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Menunggu Diproses</p>
-                    <h3 className="text-2xl font-bold mt-1">{orders.filter(o => o.status === 'menunggu_pembayaran').length} Pesanan</h3>
+                    <p className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Menunggu Konfirmasi</p>
+                    <h3 className="text-2xl font-bold mt-1">{orders.filter(o => o.status === 'menunggu_konfirmasi').length} Pesanan</h3>
                   </div>
                 </div>
 
@@ -466,16 +569,48 @@ export const AdminViews: React.FC<AdminViewsProps> = ({
                           <p className="text-xs text-zinc-600 leading-relaxed">{selectedAdminOrder.shippingAddress}</p>
                         </div>
 
+                        {/* Cost details and weight for Admin references (fixes MASALAH 4) */}
+                        <div className="space-y-2 bg-zinc-50 p-4 rounded-lg border border-zinc-200">
+                          <p className="text-[10px] font-bold text-[#154212] uppercase tracking-wider border-b pb-1">Rincian Referensi Nego (Admin Only)</p>
+                          <div className="flex justify-between text-xs">
+                            <span className="text-zinc-600">Subtotal Produk:</span>
+                            <span className="font-bold text-zinc-900">
+                              Rp {selectedAdminOrder.totalPrice ? selectedAdminOrder.totalPrice.toLocaleString('id-ID') : (selectedAdminOrder.items.reduce((sum, item) => sum + (item.price * item.qty), 0)).toLocaleString('id-ID')}
+                            </span>
+                          </div>
+                          <div className="flex justify-between text-xs">
+                            <span className="text-zinc-600">Estimasi Ongkir RajaOngkir:</span>
+                            <span className="font-bold text-zinc-900">
+                              {selectedAdminOrder.shippingEstimate !== undefined && selectedAdminOrder.shippingEstimate !== null
+                                ? `Rp ${selectedAdminOrder.shippingEstimate.toLocaleString('id-ID')}`
+                                : (selectedAdminOrder.shippingCost !== undefined && selectedAdminOrder.shippingCost !== null
+                                  ? `Rp ${selectedAdminOrder.shippingCost.toLocaleString('id-ID')}`
+                                  : 'Belum ditentukan')}
+                            </span>
+                          </div>
+                          <div className="flex justify-between text-xs border-t border-dashed border-zinc-200 pt-1.5 mt-1">
+                            <span className="text-zinc-600 font-semibold">Berat Total Paket:</span>
+                            <span className="font-bold text-zinc-900">
+                              {(selectedAdminOrder.items.reduce((acc, item) => {
+                                const prod = products.find(p => p.id === item.productId);
+                                return acc + ((prod?.weight || 1000) * item.qty);
+                              }, 0) / 1000).toFixed(2)} kg
+                            </span>
+                          </div>
+                        </div>
+
                         {/* Save adjustments form */}
-                        <form onSubmit={(e) => {
-                          e.preventDefault();
-                          const f = e.currentTarget;
-                          const stat = (f.elements.namedItem('status') as HTMLSelectElement).value as OrderStatus;
-                          const courier = (f.elements.namedItem('courier') as HTMLInputElement).value;
-                          const resi = (f.elements.namedItem('resi') as HTMLInputElement).value;
-                          onUpdateOrderStatus(selectedAdminOrder.id, stat, courier, resi);
-                          triggerToast(`Berhasil menyimpan perubahan pesanan #${selectedAdminOrder.id}.`);
-                        }} className="space-y-4 pt-4 border-t border-zinc-100">
+                        <form 
+                          key={selectedAdminOrder.id + '-' + selectedAdminOrder.status + '-' + selectedAdminOrder.updatedAt}
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            const f = e.currentTarget;
+                            const stat = (f.elements.namedItem('status') as HTMLSelectElement).value as OrderStatus;
+                            const courier = (f.elements.namedItem('courier') as HTMLInputElement).value;
+                            const resi = (f.elements.namedItem('resi') as HTMLInputElement).value;
+                            onUpdateOrderStatus(selectedAdminOrder.id, stat, courier, resi);
+                            triggerToast(`Berhasil menyimpan perubahan pesanan #${selectedAdminOrder.id}.`);
+                          }} className="space-y-4 pt-4 border-t border-zinc-100">
                           <div className="space-y-1">
                             <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Update Status</label>
                             <select 
@@ -483,7 +618,7 @@ export const AdminViews: React.FC<AdminViewsProps> = ({
                               defaultValue={selectedAdminOrder.status}
                               className="w-full text-xs font-bold bg-zinc-50 p-2 border border-zinc-200 rounded focus:border-[#154212] focus:ring-0"
                             >
-                              <option value="menunggu_pembayaran">Menunggu Pembayaran</option>
+                              <option value="menunggu_konfirmasi">Menunggu Konfirmasi</option>
                               <option value="diproses">Diproses</option>
                               <option value="dikirim">Dikirim</option>
                               <option value="selesai">Selesai</option>
@@ -520,6 +655,32 @@ export const AdminViews: React.FC<AdminViewsProps> = ({
                             <Save className="w-4 h-4" />
                             <span>Simpan Perubahan</span>
                           </button>
+
+                          <div className="pt-2">
+                            <button
+                              type="button"
+                              disabled={isDeletingOrder}
+                              onClick={async () => {
+                                if (confirm(`Apakah Anda yakin ingin menghapus history pesanan #${selectedAdminOrder.id}?`)) {
+                                  try {
+                                    setIsDeletingOrder(true);
+                                    await onDeleteOrder(selectedAdminOrder.id);
+                                    setSelectedAdminOrder(null);
+                                    triggerToast(`Pesanan #${selectedAdminOrder.id} berhasil dihapus.`);
+                                  } catch (err: any) {
+                                    console.error("Gagal menghapus pesanan:", err);
+                                    alert(`Gagal menghapus pesanan: ${err.message || err}`);
+                                  } finally {
+                                    setIsDeletingOrder(false);
+                                  }
+                                }
+                              }}
+                              className="w-full flex items-center justify-center gap-2 py-3 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-lg transition-colors border-2 border-transparent disabled:opacity-50"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                              <span>{isDeletingOrder ? 'Menghapus...' : 'Hapus History Pesanan'}</span>
+                            </button>
+                          </div>
                         </form>
                       </div>
                     </div>
@@ -549,6 +710,7 @@ export const AdminViews: React.FC<AdminViewsProps> = ({
                     description: 'Tulis deskripsi detail produk.',
                     price: 25000,
                     stock: 50,
+                    weight: 1000,
                     images: ['https://lh3.googleusercontent.com/aida-public/AB6AXuCMfLPdcPYkvg0Ea0VPR3fuHFkKifpX-uHMeZk2LROQFgqu9_0DsCgTBQWPZuRJ0As5Ka7Pa7rYzI3zx_DDIbgKGilhfk-9a9qsK8FT-si_ndtnYiOyK6CFog2mzDjyvHkZPKSOIuBSKq1X__Gf3u4LQ_8khuFnfkWtH0jNe9ZsC5KqRp1sgCJrP033uvTV16kef8uOph-BvBDPmgXZJYBImYivn-q7xIy5Ed8Q5RvG6s7NN5anURtK'],
                     isActive: true,
                     updatedAt: new Date().toISOString()
@@ -570,6 +732,7 @@ export const AdminViews: React.FC<AdminViewsProps> = ({
                         <th className="px-6 py-4">Nama Produk</th>
                         <th className="px-6 py-4">Harga</th>
                         <th className="px-6 py-4">Stok</th>
+                        <th className="px-6 py-4">Berat (gr)</th>
                         <th className="px-6 py-4">Status</th>
                         <th className="px-6 py-4 text-right">Aksi</th>
                       </tr>
@@ -578,7 +741,11 @@ export const AdminViews: React.FC<AdminViewsProps> = ({
                       {products.map((p) => (
                         <tr key={p.id} className="hover:bg-zinc-50/50">
                           <td className="px-6 py-4">
-                            <img src={p.images[0]} className="w-12 h-12 rounded object-cover border border-zinc-200" alt="" />
+                            {p.images && p.images[0] ? (
+                              <img src={p.images[0] || undefined} className="w-12 h-12 rounded object-cover border border-zinc-200" alt="" />
+                            ) : (
+                              <div className="w-12 h-12 rounded bg-zinc-100 border border-zinc-200 flex items-center justify-center text-[10px] text-zinc-400">No Img</div>
+                            )}
                           </td>
                           <td className="px-6 py-4 font-bold text-[#154212]">{p.name}</td>
                           <td className="px-6 py-4 font-semibold">Rp {p.price.toLocaleString('id-ID')}</td>
@@ -586,6 +753,9 @@ export const AdminViews: React.FC<AdminViewsProps> = ({
                             <span className={p.stock <= 10 ? 'text-red-600 font-extrabold' : 'font-medium'}>
                               {p.stock}
                             </span>
+                          </td>
+                          <td className="px-6 py-4 font-mono">
+                            {p.weight || 1000} gr
                           </td>
                           <td className="px-6 py-4">
                             <span className={`px-2.5 py-0.5 rounded text-[10px] font-bold ${p.isActive ? 'bg-emerald-100 text-emerald-800' : 'bg-zinc-100 text-zinc-500'}`}>
@@ -671,6 +841,7 @@ export const AdminViews: React.FC<AdminViewsProps> = ({
                       buttonText: (f.elements.namedItem('btn_text') as HTMLInputElement).value,
                       buttonLink: (f.elements.namedItem('btn_link') as HTMLInputElement).value,
                       image: (f.elements.namedItem('image') as HTMLInputElement).value,
+                      heroMedia: heroMedia,
                     });
                     triggerToast("Section Hero berhasil disimpan.");
                   }} className="space-y-5 text-sm">
@@ -713,7 +884,7 @@ export const AdminViews: React.FC<AdminViewsProps> = ({
                       </div>
                     </div>
                     <div className="space-y-1">
-                      <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider">URL Gambar Banner</label>
+                      <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider">URL Gambar Banner (Fallback)</label>
                       <input 
                         type="text" 
                         name="image"
@@ -729,8 +900,110 @@ export const AdminViews: React.FC<AdminViewsProps> = ({
                             imgInput.value = url;
                           }
                         }}
-                        label="Unggah Gambar Banner ke Cloudinary"
+                        label="Unggah Gambar Banner Fallback ke Cloudinary"
                       />
+                    </div>
+
+                    {/* Hero Media Slider Management */}
+                    <div className="border-t pt-5 space-y-4">
+                      <div className="flex justify-between items-center">
+                        <h4 className="text-xs font-bold text-zinc-700 uppercase tracking-wider">
+                          Media Background Slider (Maksimal 3 Media)
+                        </h4>
+                        {heroMedia.length < 3 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const nextOrder = heroMedia.length > 0 ? Math.max(...heroMedia.map(m => m.order)) + 1 : 1;
+                              setHeroMedia([...heroMedia, { type: 'image', url: '', order: nextOrder }]);
+                            }}
+                            className="px-3 py-1 bg-[#154212]/10 text-[#154212] rounded-full text-xs font-bold hover:bg-[#154212]/20 transition-all flex items-center gap-1"
+                          >
+                            <Plus className="w-3 h-3" /> Tambah Media
+                          </button>
+                        )}
+                      </div>
+
+                      {heroMedia.length === 0 ? (
+                        <p className="text-xs text-zinc-500 italic bg-zinc-50 p-4 rounded-lg border border-dashed border-zinc-200">
+                          Belum ada media slider yang ditambahkan. Gunakan URL Gambar Banner di atas sebagai fallback, atau klik tombol Tambah Media untuk membuat slider otomatis.
+                        </p>
+                      ) : (
+                        <div className="space-y-4">
+                          {heroMedia.map((media, index) => (
+                            <div key={index} className="p-4 border border-zinc-200 rounded-xl bg-white space-y-3 relative shadow-sm">
+                              <div className="flex justify-between items-center gap-2">
+                                <span className="text-xs font-bold text-zinc-400 uppercase">Slot #{index + 1}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setHeroMedia(heroMedia.filter((_, i) => i !== index));
+                                  }}
+                                  className="text-xs text-red-600 hover:text-red-800 font-bold"
+                                >
+                                  Hapus
+                                </button>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-1">
+                                  <label className="text-xs font-semibold text-zinc-500">Tipe Media</label>
+                                  <select
+                                    value={media.type}
+                                    onChange={(e) => {
+                                      const updated = [...heroMedia];
+                                      updated[index].type = e.target.value as 'image' | 'video';
+                                      setHeroMedia(updated);
+                                    }}
+                                    className="w-full px-3 py-1.5 text-xs border border-zinc-300 rounded-lg"
+                                  >
+                                    <option value="image">Gambar (Image)</option>
+                                    <option value="video">Video</option>
+                                  </select>
+                                </div>
+                                <div className="space-y-1">
+                                  <label className="text-xs font-semibold text-zinc-500">Urutan Tampil</label>
+                                  <input
+                                    type="number"
+                                    value={media.order}
+                                    onChange={(e) => {
+                                      const updated = [...heroMedia];
+                                      updated[index].order = parseInt(e.target.value) || 1;
+                                      setHeroMedia(updated);
+                                    }}
+                                    className="w-full px-3 py-1.5 text-xs border border-zinc-300 rounded-lg"
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="text-xs font-semibold text-zinc-500">Tautan Media / URL</label>
+                                <input
+                                  type="text"
+                                  value={media.url}
+                                  onChange={(e) => {
+                                    const updated = [...heroMedia];
+                                    updated[index].url = e.target.value;
+                                    setHeroMedia(updated);
+                                  }}
+                                  placeholder="https://..."
+                                  className="w-full px-3 py-1.5 text-xs border border-zinc-300 rounded-lg mb-1"
+                                />
+                                <CloudinaryUploader
+                                  currentUrl={media.url}
+                                  accept={media.type === 'video' ? 'video/*' : 'image/*'}
+                                  onUploadSuccess={(url) => {
+                                    const updated = [...heroMedia];
+                                    updated[index].url = url;
+                                    setHeroMedia(updated);
+                                  }}
+                                  label={`Unggah ${media.type === 'video' ? 'Video' : 'Gambar'} ke Cloudinary`}
+                                />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
 
                     <button 
@@ -776,7 +1049,11 @@ export const AdminViews: React.FC<AdminViewsProps> = ({
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {articles.map((art) => (
                   <div key={art.id} className="bg-white rounded-xl border border-zinc-200 overflow-hidden shadow-sm flex group">
-                    <img src={art.coverImage} className="w-28 h-auto object-cover flex-shrink-0" alt="" />
+                    {art.coverImage ? (
+                      <img src={art.coverImage || undefined} className="w-28 h-auto object-cover flex-shrink-0" alt="" />
+                    ) : (
+                      <div className="w-28 h-auto bg-zinc-100 border-r border-zinc-200 flex items-center justify-center text-[10px] text-zinc-400 flex-shrink-0">No Img</div>
+                    )}
                     <div className="p-5 flex-grow flex flex-col justify-between">
                       <div>
                         <span className="text-[9px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded uppercase tracking-wider">{art.category}</span>
@@ -888,13 +1165,24 @@ export const AdminViews: React.FC<AdminViewsProps> = ({
               <form onSubmit={(e) => {
                 e.preventDefault();
                 const f = e.currentTarget;
+
+                const rawWA = (f.elements.namedItem('contactWhatsApp') as HTMLInputElement).value;
+                let cleanWA = rawWA.replace(/[^0-9]/g, '');
+                if (cleanWA.startsWith('0')) {
+                  cleanWA = '62' + cleanWA.substring(1);
+                } else if (cleanWA.startsWith('8')) {
+                  cleanWA = '62' + cleanWA;
+                }
+
                 onSaveSettings({
                   logoUrl: (f.elements.namedItem('logoUrl') as HTMLInputElement).value,
                   siteName: (f.elements.namedItem('siteName') as HTMLInputElement).value,
                   tagline: (f.elements.namedItem('tagline') as HTMLInputElement).value,
                   email: (f.elements.namedItem('email') as HTMLInputElement).value,
                   phone: (f.elements.namedItem('phone') as HTMLInputElement).value,
+                  contactWhatsApp: cleanWA,
                   address: (f.elements.namedItem('address') as HTMLTextAreaElement).value,
+                  originAreaId: (f.elements.namedItem('originAreaId') as HTMLInputElement).value,
                   socialMedia: {
                     instagram: (f.elements.namedItem('ig') as HTMLInputElement).value,
                     facebook: (f.elements.namedItem('fb') as HTMLInputElement).value,
@@ -924,7 +1212,7 @@ export const AdminViews: React.FC<AdminViewsProps> = ({
 
                   {/* Contacts Column */}
                   <div className="bg-white p-8 rounded-xl border border-zinc-200 shadow-sm space-y-6">
-                    <h3 className="text-sm font-bold uppercase tracking-wider text-zinc-400 border-b pb-2">Informasi Kontak</h3>
+                    <h3 className="text-sm font-bold uppercase tracking-wider text-zinc-400 border-b pb-2">Informasi Kontak &amp; Pengiriman</h3>
                     
                     <div className="space-y-1">
                       <label className="text-xs font-bold text-zinc-500">Email Bisnis</label>
@@ -933,6 +1221,27 @@ export const AdminViews: React.FC<AdminViewsProps> = ({
                     <div className="space-y-1">
                       <label className="text-xs font-bold text-zinc-500">Nomor WhatsApp Hotline</label>
                       <input type="text" name="phone" defaultValue={settings.phone} className="w-full text-sm px-3 py-2 border rounded-lg" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-zinc-500">Nomor WhatsApp Pesanan</label>
+                      <input 
+                        type="text" 
+                        name="contactWhatsApp" 
+                        defaultValue={settings.contactWhatsApp || '6282322418043'} 
+                        placeholder="Contoh: 628123456789" 
+                        className="w-full text-sm px-3 py-2 border rounded-lg focus:ring-1 focus:ring-[#154212]" 
+                      />
+                      <p className="text-[10px] text-zinc-400 mt-1">
+                        Format internasional tanpa tanda "+", tanpa spasi, dan tanpa angka "0" di depan. 
+                        <strong> Sistem akan mengonversi otomatis jika diawali "0" atau "8"</strong> (misal: 0812... &rarr; 62812...).
+                      </p>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-[#154212] flex items-center gap-1.5 font-bold">
+                        <MapPin className="w-3.5 h-3.5" /> RajaOngkir Origin Area ID
+                      </label>
+                      <input type="text" name="originAreaId" defaultValue={settings.originAreaId || '68244'} required className="w-full text-sm px-3 py-2 border border-emerald-300 rounded-lg focus:ring-1 focus:ring-[#154212]" />
+                      <p className="text-[10px] text-zinc-400 mt-0.5">ID Kecamatan Asal Pengiriman Komerce (68244: Desa Manggihan, Getasan)</p>
                     </div>
                   </div>
                 </div>
@@ -997,6 +1306,7 @@ export const AdminViews: React.FC<AdminViewsProps> = ({
                 name: (f.elements.namedItem('name') as HTMLInputElement).value,
                 price: parseInt((f.elements.namedItem('price') as HTMLInputElement).value) || 0,
                 stock: parseInt((f.elements.namedItem('stock') as HTMLInputElement).value) || 0,
+                weight: parseInt((f.elements.namedItem('weight') as HTMLInputElement).value) || 1000,
                 description: (f.elements.namedItem('description') as HTMLTextAreaElement).value,
                 isActive: (f.elements.namedItem('isActive') as HTMLInputElement).checked,
               });
@@ -1007,14 +1317,18 @@ export const AdminViews: React.FC<AdminViewsProps> = ({
                 <label className="text-xs font-bold text-zinc-500">Nama Produk</label>
                 <input type="text" name="name" defaultValue={editingProduct.name} required className="w-full px-3 py-2 border rounded-lg" />
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-4">
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-zinc-500">Harga Jual (Rp)</label>
                   <input type="number" name="price" defaultValue={editingProduct.price} required className="w-full px-3 py-2 border rounded-lg" />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-zinc-500">Stok Tersedia (pcs)</label>
+                  <label className="text-xs font-bold text-zinc-500">Stok (pcs)</label>
                   <input type="number" name="stock" defaultValue={editingProduct.stock} required className="w-full px-3 py-2 border rounded-lg" />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-zinc-500">Berat (gram)</label>
+                  <input type="number" name="weight" defaultValue={editingProduct.weight || 1000} required className="w-full px-3 py-2 border rounded-lg" />
                 </div>
               </div>
               <div className="space-y-1">

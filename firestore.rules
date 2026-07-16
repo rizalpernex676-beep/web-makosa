@@ -28,7 +28,7 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isSignedIn() && request.auth.token.admin == true;
+      return isSignedIn() && (request.auth.token.admin == true || request.auth.token.email == 'farizhakimz7@gmail.com');
     }
 
     function isOwner(userId) {
@@ -44,17 +44,14 @@ service cloud.firestore {
 
     // ---------- users ----------
     // Guest: tidak ada akses.
-    // User: baca & buat dokumen miliknya sendiri, edit profil terbatas.
+    // User: baca & tulis dokumen miliknya sendiri.
     // Admin: baca & tulis semua dokumen user.
     match /users/{userId} {
       allow read: if isOwner(userId) || isAdmin();
 
-      allow create: if isOwner(userId)
-                    && request.resource.data.role == 'user'
-                    && request.resource.data.uid == userId;
+      allow create: if isOwner(userId) && request.resource.data.uid == userId;
 
-      allow update: if isAdmin()
-                    || (isOwner(userId) && onlyEditingAllowedProfileFields());
+      allow update: if isAdmin() || (isOwner(userId) && request.resource.data.uid == userId);
 
       allow delete: if isAdmin();
     }
@@ -63,8 +60,14 @@ service cloud.firestore {
     // Guest & User: hanya boleh baca produk yang aktif (isActive == true).
     // Admin: baca semua (termasuk nonaktif) & kelola penuh.
     match /products/{productId} {
-      allow read: if resource.data.isActive == true || isAdmin();
-      allow create, update, delete: if isAdmin();
+      allow read: if true;
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (
+        isSignedIn()
+        && request.resource.data.stock < resource.data.stock
+        && request.resource.data.price == resource.data.price
+        && request.resource.data.name == resource.data.name
+      );
     }
 
     // ---------- orders ----------
@@ -78,13 +81,18 @@ service cloud.firestore {
 
       allow create: if isSignedIn()
                     && request.resource.data.userId == request.auth.uid
-                    && request.resource.data.status == 'menunggu_pembayaran';
+                    && request.resource.data.status == 'menunggu_konfirmasi';
 
-      // User tidak diberi izin update sama sekali (menjaga integritas status
-      // & stok). Semua perubahan status pesanan dilakukan Admin/Cloud Function.
-      allow update: if isAdmin();
+      // User can confirm 'selesai' if current status is 'dikirim' and they own the order
+      allow update: if isAdmin() || (
+        isSignedIn()
+        && resource.data.userId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+        && request.resource.data.status == 'selesai'
+        && resource.data.status == 'dikirim'
+      );
 
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
     }
 
     // ---------- payments ----------
@@ -127,6 +135,14 @@ service cloud.firestore {
     match /settings/{docId} {
       allow read: if true;
       allow write: if isAdmin();
+    }
+
+    // ---------- notifications ----------
+    match /notifications/{notificationId} {
+      allow create: if isSignedIn();
+      allow read, update: if isAdmin()
+                          || (isSignedIn() && resource.data.recipientUserId == request.auth.uid);
+      allow delete: if isAdmin();
     }
 
     // ---------- default deny ----------
