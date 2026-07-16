@@ -1,4 +1,4 @@
-name: Deploy SOM to HestiaCP via Cloudflare Tunnel
+name: Deploy to HestiaCP via Cloudflare Tunnel
 
 on:
   push:
@@ -56,5 +56,3 @@ jobs:
             --exclude 'src' \
             --exclude '*.md' \
             --exclude 'cloudflared.deb' \
-            -e "ssh -F $HOME/.ssh/config" \
-            ./dist/ deploy-server:${{ secrets.DEPLOY_PATH }}/
